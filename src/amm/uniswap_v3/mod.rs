@@ -796,7 +796,6 @@ impl UniswapV3Pool {
 
         self.sqrt_price = initialize_event.sqrt_price_x96;
         self.tick = initialize_event.tick;
-        println!("Init event {} {}", self.sqrt_price, self.tick);
 
         Ok(())
     }
@@ -829,15 +828,9 @@ impl UniswapV3Pool {
         //We are only using this function when a mint or burn event is emitted,
         //therefore we do not need to checkTicks as that has happened before the event is emitted
         self.update_position(tick_lower, tick_upper, liquidity_delta);
-        println!("Modify position1 {}", liquidity_delta);
         if liquidity_delta != 0 {
             //if the tick is between the tick lower and tick upper, update the liquidity between the ticks
-            println!(
-                "Modify position2 {} {} {}",
-                self.tick, tick_lower, tick_upper
-            );
-            if self.tick >= tick_lower && self.tick <= tick_upper {
-                println!("Modify position3");
+            if self.tick >= tick_lower && self.tick < tick_upper {
                 self.liquidity = if liquidity_delta < 0 {
                     self.liquidity - ((-liquidity_delta) as u128)
                 } else {
