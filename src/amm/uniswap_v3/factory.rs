@@ -126,7 +126,7 @@ impl AutomatedMarketMakerFactory for UniswapV3Factory {
             fee: pool_created_event.fee,
             liquidity: 0,
             sqrt_price: U256::zero(),
-            tick_spacing: 0,
+            tick_spacing: pool_created_event.tick_spacing,
             tick: 0,
             tick_bitmap: HashMap::new(),
             ticks: HashMap::new(),

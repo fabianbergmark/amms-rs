@@ -12,6 +12,7 @@ use crate::{
     errors::{AMMError, ArithmeticError, EventLogError, SwapSimulationError},
 };
 use async_trait::async_trait;
+use ethers::contract::Lazy;
 use ethers::{
     abi::{ethabi::Bytes, RawLog, Token},
     prelude::{AbiError, EthEvent},
@@ -47,6 +48,7 @@ abigen!(
         function ticks(int24 tick) external view returns (uint128, int128, uint256, uint256, int56, uint160, uint32, bool)
         function tickBitmap(int16 wordPosition) external view returns (uint256)
         function swap(address recipient, bool zeroForOne, int256 amountSpecified, uint160 sqrtPriceLimitX96, bytes calldata data) external returns (int256, int256)
+        event Initialize(uint160 sqrtPriceX96, int24 tick)
         event Swap(address indexed sender, address indexed recipient, int256 amount0, int256 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick)
         event Burn(address indexed owner, int24 indexed tickLower, int24 indexed tickUpper, uint128 amount, uint256 amount0, uint256 amount1)
         event Mint(address sender, address indexed owner, int24 indexed tickLower, int24 indexed tickUpper, uint128 amount, uint256 amount0, uint256 amount1)
@@ -64,6 +66,15 @@ abigen!(
 pub const MIN_SQRT_RATIO: U256 = U256([4295128739, 0, 0, 0]);
 pub const MAX_SQRT_RATIO: U256 = U256([6743328256752651558, 17280870778742802505, 4294805859, 0]);
 pub const POPULATE_TICK_DATA_STEP: u64 = 100000;
+
+// Initialize event signature
+pub static INITIALIZE_EVENT_SIGNATURE: Lazy<H256> = Lazy::new(|| {
+    "0x98636036cb66a9c19a37435efc1e90142190214e8abeb821bdba3f2990dd4c95"
+        .parse()
+        .unwrap()
+});
+
+// Swap event signature
 pub const SWAP_EVENT_SIGNATURE: H256 = H256([
     196, 32, 121, 249, 74, 99, 80, 215, 230, 35, 95, 41, 23, 73, 36, 249, 40, 204, 42, 200, 24,
     235, 100, 254, 216, 0, 78, 17, 95, 188, 202, 103,
@@ -131,6 +142,7 @@ impl AutomatedMarketMaker for UniswapV3Pool {
     //This defines the event signatures to listen to that will produce events to be passed into AMM::sync_from_log()
     fn sync_on_event_signatures(&self) -> Vec<H256> {
         vec![
+            *INITIALIZE_EVENT_SIGNATURE,
             SWAP_EVENT_SIGNATURE,
             MINT_EVENT_SIGNATURE,
             BURN_EVENT_SIGNATURE,
@@ -140,7 +152,9 @@ impl AutomatedMarketMaker for UniswapV3Pool {
     fn sync_from_log(&mut self, log: Log) -> Result<(), EventLogError> {
         let event_signature = log.topics[0];
 
-        if event_signature == BURN_EVENT_SIGNATURE {
+        if event_signature == *INITIALIZE_EVENT_SIGNATURE {
+            self.sync_from_initialize_log(log)?;
+        } else if event_signature == BURN_EVENT_SIGNATURE {
             self.sync_from_burn_log(log)?;
         } else if event_signature == MINT_EVENT_SIGNATURE {
             self.sync_from_mint_log(log)?;
@@ -777,6 +791,16 @@ impl UniswapV3Pool {
         Ok(self.get_slot_0(middleware).await?.0)
     }
 
+    pub fn sync_from_initialize_log(&mut self, log: Log) -> Result<(), AbiError> {
+        let initialize_event = InitializeFilter::decode_log(&RawLog::from(log))?;
+
+        self.sqrt_price = initialize_event.sqrt_price_x96;
+        self.tick = initialize_event.tick;
+        println!("Init event {} {}", self.sqrt_price, self.tick);
+
+        Ok(())
+    }
+
     pub fn sync_from_burn_log(&mut self, log: Log) -> Result<(), AbiError> {
         let burn_event = BurnFilter::decode_log(&RawLog::from(log))?;
 
@@ -805,10 +829,15 @@ impl UniswapV3Pool {
         //We are only using this function when a mint or burn event is emitted,
         //therefore we do not need to checkTicks as that has happened before the event is emitted
         self.update_position(tick_lower, tick_upper, liquidity_delta);
-
+        println!("Modify position1 {}", liquidity_delta);
         if liquidity_delta != 0 {
             //if the tick is between the tick lower and tick upper, update the liquidity between the ticks
+            println!(
+                "Modify position2 {} {} {}",
+                self.tick, tick_lower, tick_upper
+            );
             if self.tick >= tick_lower && self.tick <= tick_upper {
+                println!("Modify position3");
                 self.liquidity = if liquidity_delta < 0 {
                     self.liquidity - ((-liquidity_delta) as u128)
                 } else {
