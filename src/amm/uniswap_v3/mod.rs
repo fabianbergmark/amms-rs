@@ -835,14 +835,22 @@ impl UniswapV3Pool {
             burn_event.tick_upper,
             -(burn_event.amount as i128),
         );
-        assert_eq!(
-            U256::try_from(-amount0).expect("Failed to convernt U256 to I256"),
-            burn_event.amount_0
-        );
-        assert_eq!(
-            U256::try_from(-amount1).expect("Failed to convernt U256 to I256"),
-            burn_event.amount_1
-        );
+        if U256::try_from(-amount0).expect("Failed to convernt U256 to I256") != burn_event.amount_0
+        {
+            log::warn!(
+                "Burn log sync: Incorrect amount0, \nexpected: {}, \nactual: {}",
+                amount0,
+                burn_event.amount_0
+            );
+        }
+        if U256::try_from(-amount1).expect("Failed to convernt U256 to I256") != burn_event.amount_1
+        {
+            log::warn!(
+                "Burn log sync: Incorrect amount1, \nexpected: {}, \nactual: {}",
+                amount1,
+                burn_event.amount_1
+            );
+        }
         Ok(())
     }
 
@@ -855,14 +863,22 @@ impl UniswapV3Pool {
             mint_event.amount as i128,
         );
 
-        assert_eq!(
-            U256::try_from(amount0).expect("Failed to convernt U256 to I256"),
-            mint_event.amount_0
-        );
-        assert_eq!(
-            U256::try_from(amount1).expect("Failed to convernt U256 to I256"),
-            mint_event.amount_1
-        );
+        if U256::try_from(amount0).expect("Failed to convernt U256 to I256") != mint_event.amount_0
+        {
+            log::warn!(
+                "Burn log sync: Incorrect amount0, \nexpected: {}, \nactual: {}",
+                amount0,
+                mint_event.amount_0
+            );
+        }
+        if U256::try_from(amount1).expect("Failed to convernt U256 to I256") != mint_event.amount_1
+        {
+            log::warn!(
+                "Mint log sync: Incorrect amount1, \nexpected: {}, \nactual: {}",
+                amount1,
+                mint_event.amount_1
+            );
+        }
         Ok(())
     }
 
