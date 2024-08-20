@@ -835,14 +835,14 @@ impl UniswapV3Pool {
             burn_event.tick_upper,
             -(burn_event.amount as i128),
         );
-        // assert_eq!(
-        //     U256::try_from(-amount0).expect("Failed to convernt U256 to I256"),
-        //     burn_event.amount_0
-        // );
-        // assert_eq!(
-        //     U256::try_from(-amount1).expect("Failed to convernt U256 to I256"),
-        //     burn_event.amount_1
-        // );
+        assert_eq!(
+            U256::try_from(-amount0).expect("Failed to convernt U256 to I256"),
+            burn_event.amount_0
+        );
+        assert_eq!(
+            U256::try_from(-amount1).expect("Failed to convernt U256 to I256"),
+            burn_event.amount_1
+        );
         Ok(())
     }
 
@@ -855,14 +855,14 @@ impl UniswapV3Pool {
             mint_event.amount as i128,
         );
 
-        // assert_eq!(
-        //     U256::try_from(amount0).expect("Failed to convernt U256 to I256"),
-        //     mint_event.amount_0
-        // );
-        // assert_eq!(
-        //     U256::try_from(amount1).expect("Failed to convernt U256 to I256"),
-        //     mint_event.amount_1
-        // );
+        assert_eq!(
+            U256::try_from(amount0).expect("Failed to convernt U256 to I256"),
+            mint_event.amount_0
+        );
+        assert_eq!(
+            U256::try_from(amount1).expect("Failed to convernt U256 to I256"),
+            mint_event.amount_1
+        );
         Ok(())
     }
 
