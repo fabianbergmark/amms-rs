@@ -130,6 +130,7 @@ impl AutomatedMarketMakerFactory for UniswapV3Factory {
             tick: 0,
             tick_bitmap: HashMap::new(),
             ticks: HashMap::new(),
+            positions: vec![],
         }))
     }
 }

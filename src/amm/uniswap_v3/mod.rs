@@ -110,6 +110,16 @@ pub struct UniswapV3Pool {
     pub tick_spacing: i32,
     pub tick_bitmap: HashMap<i16, U256>,
     pub ticks: HashMap<i32, Info>,
+    #[serde(skip)]
+    pub positions: Vec<Position>,
+}
+#[derive(Debug, Clone, Default, Copy)]
+pub struct Position {
+    tick_lower: i32,
+    tick_upper: i32,
+    liquidity: u128,
+    fee0: U256,
+    fee1: U256,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -249,6 +259,7 @@ impl UniswapV3Pool {
             tick_spacing,
             tick_bitmap,
             ticks,
+            positions: vec![],
         }
     }
 
@@ -271,6 +282,7 @@ impl UniswapV3Pool {
             fee: 0,
             tick_bitmap: HashMap::new(),
             ticks: HashMap::new(),
+            positions: vec![],
         };
 
         //We need to get tick spacing before populating tick data because tick spacing can not be uninitialized when syncing burn and mint logs
@@ -333,6 +345,7 @@ impl UniswapV3Pool {
                 tick: 0,
                 tick_bitmap: HashMap::new(),
                 ticks: HashMap::new(),
+                positions: vec![],
             })
         } else {
             Err(EventLogError::InvalidEventSignature)
@@ -665,6 +678,26 @@ impl UniswapV3Pool {
                 .0;
 
             current_state.amount_calculated -= I256::from_raw(step.amount_out);
+            for position in &mut self.positions {
+                if self.liquidity > 0
+                    && current_state.tick >= position.tick_lower
+                    && current_state.tick < position.tick_upper
+                {
+                    if zero_for_one {
+                        position.fee0 += U256::try_from(
+                            (U512::from(step.fee_amount) << 128) / (U512::from(self.liquidity)),
+                        )
+                        .expect("Failed to cast U512 to U256")
+                            * U256::from(position.liquidity);
+                    } else {
+                        position.fee1 += U256::try_from(
+                            (U512::from(step.fee_amount) << 128) / (U512::from(self.liquidity)),
+                        )
+                        .expect("Failed to cast U512 to U256")
+                            * U256::from(position.liquidity);
+                    }
+                }
+            }
 
             //If the price moved all the way to the next price, recompute the liquidity change for the next iteration
             if current_state.sqrt_price_x_96 == step.sqrt_price_next_x96 {
@@ -882,6 +915,109 @@ impl UniswapV3Pool {
         Ok(())
     }
 
+    pub fn mint_helper(&self, amount0: U256, amount1: U256, tick: i32) -> u128 {
+        let tick_lower = tick;
+        let tick_upper = tick + 1;
+        let mut liquidity = 0;
+
+        if self.tick < tick_lower {
+            liquidity = Self::get_amount_0_delta_inverted(
+                Self::get_sqrt_ratio_at_tick(tick_lower),
+                Self::get_sqrt_ratio_at_tick(tick_upper),
+                amount0 - 1,
+            );
+        }
+        //if the tick is between the tick lower and tick upper, update the liquidity between the ticks
+        else if self.tick < tick_upper {
+            let liquidity_lower = Self::get_amount_0_delta_inverted(
+                self.sqrt_price,
+                Self::get_sqrt_ratio_at_tick(tick_upper),
+                amount0 - 1,
+            );
+
+            let liquidity_upper = Self::get_amount_1_delta_inverted(
+                Self::get_sqrt_ratio_at_tick(tick_lower),
+                self.sqrt_price,
+                amount1 - 1,
+            );
+            // take the minimum value
+            liquidity = liquidity_lower.min(liquidity_upper);
+        } else {
+            liquidity = Self::get_amount_1_delta_inverted(
+                Self::get_sqrt_ratio_at_tick(tick_lower),
+                Self::get_sqrt_ratio_at_tick(tick_upper),
+                amount1 - 1,
+            );
+        }
+
+        // Temporary check for correctness
+        let mut a0 = I256::zero();
+        let mut a1 = I256::zero();
+        let liquidity_delta = liquidity as i128;
+        if liquidity_delta != 0 {
+            if self.tick < tick_lower {
+                a0 = Self::get_amount_0_delta(
+                    Self::get_sqrt_ratio_at_tick(tick_lower),
+                    Self::get_sqrt_ratio_at_tick(tick_upper),
+                    liquidity_delta,
+                )
+            }
+            //if the tick is between the tick lower and tick upper, update the liquidity between the ticks
+            else if self.tick < tick_upper {
+                let liquidity_before = self.liquidity;
+
+                a0 = Self::get_amount_0_delta(
+                    self.sqrt_price,
+                    Self::get_sqrt_ratio_at_tick(tick_upper),
+                    liquidity_delta,
+                );
+                a1 = Self::get_amount_1_delta(
+                    Self::get_sqrt_ratio_at_tick(tick_lower),
+                    self.sqrt_price,
+                    liquidity_delta,
+                );
+            } else {
+                a1 = Self::get_amount_1_delta(
+                    Self::get_sqrt_ratio_at_tick(tick_lower),
+                    Self::get_sqrt_ratio_at_tick(tick_upper),
+                    liquidity_delta,
+                )
+            }
+        }
+        assert!(a0.into_raw() <= amount0);
+        assert!(a1.into_raw() <= amount1);
+
+        return liquidity;
+    }
+
+    pub fn mint_mut(&mut self, amount: u128, tick: i32) -> (usize, (U256, U256)) {
+        let position = Position {
+            tick_lower: tick,
+            tick_upper: tick + 1,
+            liquidity: amount,
+            fee0: U256::zero(),
+            fee1: U256::zero(),
+        };
+        let index = self.positions.len();
+        self.positions.push(position);
+        let (amount0, amount1) = self.modify_position(tick, tick + 1, amount as i128);
+        return (index, (amount0.into_raw(), amount1.into_raw()));
+    }
+
+    pub fn burn_and_collect_mut(&mut self, index: usize) -> (U256, U256) {
+        let position = self.positions[index];
+        let (amount0, amount1) = self.modify_position(
+            position.tick_lower,
+            position.tick_upper,
+            -(position.liquidity as i128),
+        );
+        // Return the burned amount plus accumulated fees
+        return (
+            (-amount0).into_raw() + position.fee0,
+            (-amount1).into_raw() + position.fee1,
+        );
+    }
+
     fn get_sqrt_ratio_at_tick(tick: i32) -> U256 {
         let abs_tick = tick.abs();
 
@@ -974,7 +1110,7 @@ impl UniswapV3Pool {
         }
         let numerator1 = U512::from(liquidity) << 96;
         let numerator2 = U512::from(b - a);
-        return if roundup {
+        let amount0 = if roundup {
             let mut result = U256::try_from((numerator1 * numerator2) / U512::from(b))
                 .expect("Failed to convert U512 to U256");
             if (numerator1 * numerator2) % U512::from(b) > U512::zero() {
@@ -994,6 +1130,18 @@ impl UniswapV3Pool {
             )
             .expect("Failed to convert U256 to I256")
         };
+        return amount0;
+    }
+
+    fn get_amount_0_delta_inverted(mut a: U256, mut b: U256, amount0: U256) -> u128 {
+        if a > b {
+            (a, b) = (b, a);
+        }
+        let amount0 = U512::from(amount0);
+        let a = U512::from(a);
+        let b = U512::from(b);
+        let liq = ((amount0 * a * b) / (b - a)) >> 96;
+        return liq.as_u128();
     }
 
     fn get_amount_1_delta(mut a: U256, mut b: U256, liq: i128) -> I256 {
@@ -1006,12 +1154,9 @@ impl UniswapV3Pool {
             (a, b) = (b, a);
         }
 
-        return if roundup {
-            let mut result = U256::try_from(
-                (U512::from(liquidity) * U512::from(b - a))
-                    / U512::from(0x1000000000000000000000000_u128),
-            )
-            .expect("Failed to convert U512 to U256");
+        let amount1 = if roundup {
+            let mut result = U256::try_from((U512::from(liquidity) * U512::from(b - a)) >> 96)
+                .expect("Failed to convert U512 to U256");
             if (U512::from(liquidity) * U512::from(b - a))
                 % U512::from(0x1000000000000000000000000_u128)
                 > U512::zero()
@@ -1021,14 +1166,21 @@ impl UniswapV3Pool {
             I256::try_from(result).expect("Failed to convert U256 to I256")
         } else {
             -I256::try_from(
-                U256::try_from(
-                    (U512::from(liquidity) * U512::from(b - a))
-                        / U512::from(0x1000000000000000000000000_u128),
-                )
-                .expect("Failed to convert U512 to U256"),
+                U256::try_from((U512::from(liquidity) * U512::from(b - a)) >> 96)
+                    .expect("Failed to convert U512 to U256"),
             )
             .expect("Failed to convert U256 to I256")
         };
+        return amount1;
+    }
+
+    fn get_amount_1_delta_inverted(mut a: U256, mut b: U256, amount1: U256) -> u128 {
+        if a > b {
+            (a, b) = (b, a);
+        }
+        let denom = U512::from(b - a);
+
+        return ((U512::from(amount1) << 96) / denom).as_u128();
     }
 
     pub fn modify_position(
