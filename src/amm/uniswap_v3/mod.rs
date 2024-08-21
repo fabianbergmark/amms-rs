@@ -208,7 +208,7 @@ impl AutomatedMarketMaker for UniswapV3Pool {
         token_in: H160,
         amount_in: U256,
     ) -> Result<U256, SwapSimulationError> {
-        self.simulate_swap_mut_with_limit(token_in, amount_in, None)
+        self.simulate_swap_with_limit_mut(token_in, amount_in, None)
     }
 
     fn get_token_out(&self, token_in: H160) -> H160 {
@@ -426,7 +426,7 @@ impl UniswapV3Pool {
         Ok(())
     }
 
-    fn simulate_swap_with_limit(
+    pub fn simulate_swap_with_limit(
         &self,
         token_in: H160,
         amount_in: U256,
@@ -569,7 +569,7 @@ impl UniswapV3Pool {
         Ok(amount_out)
     }
 
-    fn simulate_swap_mut_with_limit(
+    pub fn simulate_swap_with_limit_mut(
         &mut self,
         token_in: H160,
         amount_in: U256,
