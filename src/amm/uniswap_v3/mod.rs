@@ -1,18 +1,14 @@
 pub mod batch_request;
 pub mod factory;
 
-use std::{
-    cmp::Ordering,
-    collections::{BTreeMap, HashMap},
-    sync::Arc,
-};
-
 use crate::{
     amm::AutomatedMarketMaker,
     errors::{AMMError, ArithmeticError, EventLogError, SwapSimulationError},
 };
 use async_trait::async_trait;
 use ethers::contract::Lazy;
+use ethers::prelude::abigen;
+use ethers::types::U512;
 use ethers::{
     abi::{ethabi::Bytes, RawLog, Token},
     prelude::{AbiError, EthEvent},
@@ -21,9 +17,14 @@ use ethers::{
 };
 use num_bigfloat::BigFloat;
 use serde::{Deserialize, Serialize};
-
-use ethers::prelude::abigen;
-use ethers::types::U512;
+use std::collections::hash_map::DefaultHasher;
+use std::collections::HashSet;
+use std::hash::{Hash, Hasher};
+use std::{
+    cmp::Ordering,
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+};
 use tokio::task::JoinHandle;
 
 use self::factory::POOL_CREATED_EVENT_SIGNATURE;
@@ -111,7 +112,7 @@ pub struct UniswapV3Pool {
     pub tick_bitmap: HashMap<i16, U256>,
     pub ticks: HashMap<i32, Info>,
     #[serde(skip)]
-    pub positions: Vec<Position>,
+    pub positions: HashMap<u64, Position>,
 }
 #[derive(Debug, Clone, Default, Copy)]
 pub struct Position {
@@ -259,7 +260,7 @@ impl UniswapV3Pool {
             tick_spacing,
             tick_bitmap,
             ticks,
-            positions: vec![],
+            positions: HashMap::new(),
         }
     }
 
@@ -282,7 +283,7 @@ impl UniswapV3Pool {
             fee: 0,
             tick_bitmap: HashMap::new(),
             ticks: HashMap::new(),
-            positions: vec![],
+            positions: HashMap::new(),
         };
 
         //We need to get tick spacing before populating tick data because tick spacing can not be uninitialized when syncing burn and mint logs
@@ -345,7 +346,7 @@ impl UniswapV3Pool {
                 tick: 0,
                 tick_bitmap: HashMap::new(),
                 ticks: HashMap::new(),
-                positions: vec![],
+                positions: HashMap::new(),
             })
         } else {
             Err(EventLogError::InvalidEventSignature)
@@ -678,7 +679,7 @@ impl UniswapV3Pool {
                 .0;
 
             current_state.amount_calculated -= I256::from_raw(step.amount_out);
-            for position in &mut self.positions {
+            for (_, position) in &mut self.positions {
                 if self.liquidity > 0
                     && current_state.tick >= position.tick_lower
                     && current_state.tick < position.tick_upper
@@ -990,7 +991,7 @@ impl UniswapV3Pool {
         return liquidity;
     }
 
-    pub fn mint_mut(&mut self, amount: u128, tick: i32) -> (usize, (U256, U256)) {
+    pub fn mint_mut(&mut self, amount: u128, tick: i32) -> (u64, (U256, U256)) {
         let position = Position {
             tick_lower: tick,
             tick_upper: tick + 1,
@@ -998,24 +999,29 @@ impl UniswapV3Pool {
             fee0: U256::zero(),
             fee1: U256::zero(),
         };
-        let index = self.positions.len();
-        self.positions.push(position);
+        let mut hasher = DefaultHasher::new();
+        (position.tick_lower, position.tick_upper, position.liquidity).hash(&mut hasher);
+        let hash = hasher.finish();
+        self.positions.insert(hash, position);
         let (amount0, amount1) = self.modify_position(tick, tick + 1, amount as i128);
-        return (index, (amount0.into_raw(), amount1.into_raw()));
+        (hash, (amount0.into_raw(), amount1.into_raw()))
     }
 
-    pub fn burn_and_collect_mut(&mut self, index: usize) -> (U256, U256) {
-        let position = self.positions[index];
-        let (amount0, amount1) = self.modify_position(
-            position.tick_lower,
-            position.tick_upper,
-            -(position.liquidity as i128),
-        );
-        // Return the burned amount plus accumulated fees
-        return (
-            (-amount0).into_raw() + position.fee0,
-            (-amount1).into_raw() + position.fee1,
-        );
+    pub fn burn_and_collect_mut(&mut self, hash: u64) -> (U256, U256) {
+        if let Some(position) = self.positions.remove(&hash) {
+            let (amount0, amount1) = self.modify_position(
+                position.tick_lower,
+                position.tick_upper,
+                -(position.liquidity as i128),
+            );
+            // Return the burned amount plus accumulated fees
+            (
+                (-amount0).into_raw() + position.fee0,
+                (-amount1).into_raw() + position.fee1,
+            )
+        } else {
+            (U256::zero(), U256::zero())
+        }
     }
 
     fn get_sqrt_ratio_at_tick(tick: i32) -> U256 {

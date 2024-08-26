@@ -1,8 +1,3 @@
-use std::{
-    collections::{BTreeMap, HashMap},
-    sync::Arc,
-};
-
 use async_trait::async_trait;
 use ethers::{
     abi::RawLog,
@@ -11,6 +6,11 @@ use ethers::{
     types::{BlockNumber, Filter, Log, H160, H256, U256, U64},
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+};
 use tokio::task::JoinHandle;
 
 use crate::{
@@ -130,7 +130,7 @@ impl AutomatedMarketMakerFactory for UniswapV3Factory {
             tick: 0,
             tick_bitmap: HashMap::new(),
             ticks: HashMap::new(),
-            positions: vec![],
+            positions: HashMap::new(),
         }))
     }
 }
