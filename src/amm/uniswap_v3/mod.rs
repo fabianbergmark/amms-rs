@@ -18,7 +18,6 @@ use ethers::{
 use num_bigfloat::BigFloat;
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
-use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::{
     cmp::Ordering,
@@ -919,7 +918,7 @@ impl UniswapV3Pool {
     pub fn mint_helper(&self, amount0: U256, amount1: U256, tick: i32) -> u128 {
         let tick_lower = tick;
         let tick_upper = tick + 1;
-        let mut liquidity = 0;
+        let liquidity;
 
         if self.tick < tick_lower {
             liquidity = Self::get_amount_0_delta_inverted(
@@ -965,8 +964,6 @@ impl UniswapV3Pool {
             }
             //if the tick is between the tick lower and tick upper, update the liquidity between the ticks
             else if self.tick < tick_upper {
-                let liquidity_before = self.liquidity;
-
                 a0 = Self::get_amount_0_delta(
                     self.sqrt_price,
                     Self::get_sqrt_ratio_at_tick(tick_upper),
@@ -988,7 +985,7 @@ impl UniswapV3Pool {
         assert!(a0.into_raw() <= amount0);
         assert!(a1.into_raw() <= amount1);
 
-        return liquidity;
+        liquidity
     }
 
     pub fn mint_mut(&mut self, amount: u128, tick: i32) -> (u64, (U256, U256)) {

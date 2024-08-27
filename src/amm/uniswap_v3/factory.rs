@@ -6,7 +6,6 @@ use ethers::{
     types::{BlockNumber, Filter, Log, H160, H256, U256, U64},
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 use std::{
     collections::{BTreeMap, HashMap},
     sync::Arc,
