@@ -1,7 +1,9 @@
-# amms-rs [![Github Actions][gha-badge]][gha]
+# amms-rs [![Github Actions][gha-badge]][gha] [![Chat][tg-badge]][tg-url]
 
 [gha]: https://github.com/darkforestry/amms-rs/actions
 [gha-badge]: https://github.com/darkforestry/amms-rs/actions/workflows/ci.yml/badge.svg
+[tg-url]: https://t.me/amms_rs
+[tg-badge]: https://img.shields.io/badge/chat-telegram-blue
 
 `amms-rs` is a Rust library to interact with automated market makers across EVM chains.
 
@@ -9,18 +11,6 @@ This lib provides functionality to [discover](https://github.com/darkforestry/am
 
 `amms-rs` was built with modularity in mind, making it quick and easy to add a new `AMM` variant by implementing the `AutomatedMarketMaker` trait. For a full walkthrough on how to quickly implement a new `AMM`, check out [`addingAnAMM.md`](https://github.com/darkforestry/amms-rs/blob/main/docs/addingAnAMM.md).
 
-## Installation
-
-To use `amms` in your project, add the following to your `Cargo.toml`
-
-```toml
-[dependencies]
-amms = "0.6.1"
-```
-
-## Tests and Docs are still being written 🏗️.
-
-Tests are still being written, assume bugs until tested. If you would like to help contribute on the tests or docs, feel free to open up an issue or make a PR.
 
 ## Supported AMMs
 
@@ -29,7 +19,6 @@ Tests are still being written, assume bugs until tested. If you would like to he
 | UniswapV2 Pools | ✅     |
 | UniswapV3 Pools | ✅     |
 | ERC4626 Vaults  | ✅     |
-| Izumi Pools     | 🟨     |
+| Balancer Pools  | 🟨     |
 | Curve Pools     | ❌     |
-| Balancer Pools  | ❌     |
 | Bancor Pools    | ❌     |
