@@ -988,10 +988,19 @@ impl UniswapV3Pool {
         liquidity
     }
 
+    pub fn get_next_tick(&self, dir: i32) -> i32 {
+        let mut compressed = self.tick / self.tick_spacing;
+        if self.tick < 0 && self.tick % self.tick_spacing != 0 {
+            compressed -= 1;
+        }
+        compressed += dir;
+        compressed * self.tick_spacing
+    }
+
     pub fn mint_mut(&mut self, amount: u128, tick: i32) -> (u64, (U256, U256)) {
         let position = Position {
             tick_lower: tick,
-            tick_upper: tick + 1,
+            tick_upper: tick + self.tick_spacing,
             liquidity: amount,
             fee0: U256::zero(),
             fee1: U256::zero(),
@@ -1000,7 +1009,7 @@ impl UniswapV3Pool {
         (position.tick_lower, position.tick_upper, position.liquidity).hash(&mut hasher);
         let hash = hasher.finish();
         self.positions.insert(hash, position);
-        let (amount0, amount1) = self.modify_position(tick, tick + 1, amount as i128);
+        let (amount0, amount1) = self.modify_position(tick, self.tick_spacing, amount as i128);
         (hash, (amount0.into_raw(), amount1.into_raw()))
     }
 
@@ -1094,12 +1103,12 @@ impl UniswapV3Pool {
         // this divides by 1<<32 rounding up to go from a Q128.128 to a Q128.96.
         // we then downcast because we know the result always fits within 160 bits due to our tick input constraint
         // we round up in the division so getTickAtSqrtRatio of the output price is always consistent
-        return (ratio >> 32)
+        (ratio >> 32)
             + if ratio % U256::from(1_u64 << 32) == U256::zero() {
                 U256::zero()
             } else {
                 U256::one()
-            };
+            }
     }
 
     fn get_amount_0_delta(mut a: U256, mut b: U256, liq: i128) -> I256 {
@@ -1301,6 +1310,9 @@ impl UniswapV3Pool {
     }
 
     pub fn flip_tick(&mut self, tick: i32, tick_spacing: i32) {
+        if tick % self.tick_spacing != 0 {
+            log::warn!("Flip tick on non spaced tick, disallowed!")
+        }
         let (word_pos, bit_pos) = uniswap_v3_math::tick_bitmap::position(tick / tick_spacing);
         let mask = U256::one() << bit_pos;
 
