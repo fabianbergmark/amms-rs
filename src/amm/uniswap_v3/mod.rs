@@ -915,9 +915,13 @@ impl UniswapV3Pool {
         Ok(())
     }
 
-    pub fn mint_helper(&self, amount0: U256, amount1: U256, tick: i32) -> u128 {
-        let tick_lower = tick;
-        let tick_upper = tick + 1;
+    pub fn mint_helper(
+        &self,
+        amount0: U256,
+        amount1: U256,
+        tick_lower: i32,
+        tick_upper: i32,
+    ) -> u128 {
         let liquidity;
 
         if self.tick < tick_lower {
@@ -997,10 +1001,15 @@ impl UniswapV3Pool {
         compressed * self.tick_spacing
     }
 
-    pub fn mint_mut(&mut self, amount: u128, tick: i32) -> (u64, (U256, U256)) {
+    pub fn mint_mut(
+        &mut self,
+        amount: u128,
+        tick_lower: i32,
+        tick_upper: i32,
+    ) -> (u64, (U256, U256)) {
         let position = Position {
-            tick_lower: tick,
-            tick_upper: tick + self.tick_spacing,
+            tick_lower,
+            tick_upper,
             liquidity: amount,
             fee0: U256::zero(),
             fee1: U256::zero(),
@@ -1009,7 +1018,7 @@ impl UniswapV3Pool {
         (position.tick_lower, position.tick_upper, position.liquidity).hash(&mut hasher);
         let hash = hasher.finish();
         self.positions.insert(hash, position);
-        let (amount0, amount1) = self.modify_position(tick, self.tick_spacing, amount as i128);
+        let (amount0, amount1) = self.modify_position(tick_lower, tick_upper, amount as i128);
         (hash, (amount0.into_raw(), amount1.into_raw()))
     }
 
