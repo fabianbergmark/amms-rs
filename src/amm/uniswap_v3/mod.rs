@@ -1139,7 +1139,7 @@ impl UniswapV3Pool {
         let a = U512::from(a);
         let b = U512::from(b);
         let liq: U512 = ((amount0 * a * b) / (b - a)) >> 96;
-        liq.to_u128()
+        liq.to()
     }
 
     fn get_amount_1_delta(mut a: U256, mut b: U256, liq: i128) -> I256 {
@@ -1179,7 +1179,7 @@ impl UniswapV3Pool {
         let denom = U512::from(b - a);
 
         let amount: U512 = (U512::from(amount1) << 96) / denom;
-        amount.to_u128()
+        amount.to()
     }
 
     pub fn modify_position(
