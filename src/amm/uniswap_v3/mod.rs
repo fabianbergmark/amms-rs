@@ -928,7 +928,7 @@ impl UniswapV3Pool {
             liquidity = Self::get_amount_0_delta_inverted(
                 Self::get_sqrt_ratio_at_tick(tick_lower),
                 Self::get_sqrt_ratio_at_tick(tick_upper),
-                amount0 - 1,
+                amount0,
             );
         }
         //if the tick is between the tick lower and tick upper, update the liquidity between the ticks
@@ -936,13 +936,13 @@ impl UniswapV3Pool {
             let liquidity_lower = Self::get_amount_0_delta_inverted(
                 self.sqrt_price,
                 Self::get_sqrt_ratio_at_tick(tick_upper),
-                amount0 - 1,
+                amount0,
             );
 
             let liquidity_upper = Self::get_amount_1_delta_inverted(
                 Self::get_sqrt_ratio_at_tick(tick_lower),
                 self.sqrt_price,
-                amount1 - 1,
+                amount1,
             );
             // take the minimum value
             liquidity = liquidity_lower.min(liquidity_upper);
@@ -950,7 +950,7 @@ impl UniswapV3Pool {
             liquidity = Self::get_amount_1_delta_inverted(
                 Self::get_sqrt_ratio_at_tick(tick_lower),
                 Self::get_sqrt_ratio_at_tick(tick_upper),
-                amount1 - 1,
+                amount1,
             );
         }
 
@@ -1161,7 +1161,7 @@ impl UniswapV3Pool {
         let amount0 = U512::from(amount0);
         let a = U512::from(a);
         let b = U512::from(b);
-        let liq = ((amount0 * a * b) / (b - a)) >> 96;
+        let liq = amount0 * ((a * b) >> 96) / (b - a);
         return liq.as_u128();
     }
 
