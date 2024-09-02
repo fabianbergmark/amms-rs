@@ -96,10 +96,10 @@ impl AutomatedMarketMaker for UniswapV2Pool {
 
         if event_signature == IUniswapV2Pair::Sync::SIGNATURE_HASH {
             let sync_event = IUniswapV2Pair::Sync::decode_log(log.as_ref(), true)?;
-            tracing::info!(reserve_0 = sync_event.reserve0, reserve_1 = sync_event.reserve1, address = ?self.address, "UniswapV2 sync event");
+            //tracing::info!(reserve_0 = sync_event.reserve0, reserve_1 = sync_event.reserve1, address = ?self.address, "UniswapV2 sync event");
 
-            self.reserve_0 = sync_event.reserve0;
-            self.reserve_1 = sync_event.reserve1;
+            self.reserve_0 = sync_event.reserve0.to();
+            self.reserve_1 = sync_event.reserve1.to();
 
             Ok(())
         } else {
@@ -324,9 +324,9 @@ impl UniswapV2Pool {
             Err(contract_error) => return Err(AMMError::ContractError(contract_error)),
         };
 
-        tracing::trace!(reserve_0, reserve_1);
+        //tracing::trace!(reserve_0, reserve_1);
 
-        Ok((reserve_0, reserve_1))
+        Ok((reserve_0.to(), reserve_1.to()))
     }
 
     pub async fn get_token_decimals<T, N, P>(

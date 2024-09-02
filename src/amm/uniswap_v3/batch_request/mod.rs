@@ -123,9 +123,9 @@ where
         provider,
         pool.address,
         zero_for_one,
-        tick_start,
+        tick_start.try_into().unwrap(),
         num_ticks,
-        pool.tick_spacing,
+        pool.tick_spacing.try_into().unwrap(),
     );
     let res = if let Some(block_number) = block_number {
         deployer.block(block_number.into()).call_raw().await?

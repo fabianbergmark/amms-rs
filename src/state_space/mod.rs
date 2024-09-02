@@ -74,7 +74,7 @@ pub struct StateSpaceManager<T, N, P> {
 impl<T, N, P> StateSpaceManager<T, N, P>
 where
     T: Transport + Clone,
-    N: Network,
+    N: Network<BlockResponse = Block>,
     P: Provider<T, N> + 'static,
 {
     pub fn new(amms: Vec<AMM>, provider: Arc<P>) -> Self {
@@ -159,10 +159,7 @@ where
         let updated_amms_handle: JoinHandle<Result<(), StateSpaceError>> =
             tokio::spawn(async move {
                 while let Some(block) = stream_rx.recv().await {
-                    let chain_head_block_number = block
-                        .header
-                        .number
-                        .ok_or_else(|| StateSpaceError::BlockNumberNotFound)?;
+                    let chain_head_block_number = block.header.number;
 
                     // If the chain head block number <= latest synced block, a reorg has occurred
                     if chain_head_block_number <= latest_synced_block {

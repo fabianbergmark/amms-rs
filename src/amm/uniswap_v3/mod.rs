@@ -5,19 +5,29 @@ use crate::{
     amm::{consts::*, AutomatedMarketMaker, IErc20},
     errors::{AMMError, ArithmeticError, EventLogError, SwapSimulationError},
 };
-use alloy::{network::Network, primitives::{Address, Bytes, B256, I256, U256}, providers::Provider, rpc::types::eth::{Filter, Log}, sol, sol_types::{SolCall, SolEvent}, transports::Transport, uint};
+use alloy::primitives::aliases::I24;
+use alloy::primitives::ruint::UintTryFrom;
+use alloy::primitives::U512;
+use alloy::{
+    network::Network,
+    primitives::{Address, Bytes, B256, I256, U256},
+    providers::Provider,
+    rpc::types::eth::{Filter, Log},
+    sol,
+    sol_types::{SolCall, SolEvent},
+    transports::Transport,
+    uint,
+};
 use async_trait::async_trait;
 use futures::{stream::FuturesOrdered, StreamExt};
 use num_bigfloat::BigFloat;
 use serde::{Deserialize, Serialize};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::{
     cmp::Ordering,
     collections::{BTreeMap, HashMap},
     sync::Arc,
 };
-use std::hash::{DefaultHasher, Hash, Hasher};
-use alloy::primitives::ruint::UintTryFrom;
-use alloy::primitives::U512;
 use tracing::instrument;
 use uniswap_v3_math::tick_math::{MAX_SQRT_RATIO, MAX_TICK, MIN_SQRT_RATIO, MIN_TICK};
 
@@ -170,7 +180,11 @@ impl AutomatedMarketMaker for UniswapV3Pool {
         Ok(())
     }
 
-    fn simulate_swap(&self, token_in: Address, amount_in: U256) -> Result<U256, SwapSimulationError> {
+    fn simulate_swap(
+        &self,
+        token_in: Address,
+        amount_in: U256,
+    ) -> Result<U256, SwapSimulationError> {
         self.simulate_swap_with_limit(token_in, amount_in, None)
     }
 
@@ -311,7 +325,7 @@ impl UniswapV3Pool {
                 token_b: pool_created_event.token1,
                 token_a_decimals: 0,
                 token_b_decimals: 0,
-                fee: pool_created_event.fee,
+                fee: pool_created_event.fee.to(),
                 liquidity: 0,
                 sqrt_price: U256::ZERO,
                 tick_spacing: 0,
@@ -429,7 +443,7 @@ impl UniswapV3Pool {
         //Initialize a mutable state state struct to hold the dynamic simulated state of the pool
         let mut current_state = CurrentState {
             sqrt_price_x_96: self.sqrt_price, //Active price on the pool
-            amount_calculated: I256::ZERO,  //Amount of token_out that has been calculated
+            amount_calculated: I256::ZERO,    //Amount of token_out that has been calculated
             amount_specified_remaining: I256::from_raw(amount_in), //Amount of token_in that has not been swapped
             tick: self.tick,                                       //Current i24 tick of the pool
             liquidity: self.liquidity, //Current available liquidity in the tick range
@@ -572,7 +586,7 @@ impl UniswapV3Pool {
         //Initialize a mutable state state struct to hold the dynamic simulated state of the pool
         let mut current_state = CurrentState {
             sqrt_price_x_96: self.sqrt_price, //Active price on the pool
-            amount_calculated: I256::ZERO,  //Amount of token_out that has been calculated
+            amount_calculated: I256::ZERO,    //Amount of token_out that has been calculated
             amount_specified_remaining: I256::from_raw(amount_in), //Amount of token_in that has not been swapped
             tick: self.tick,                                       //Current i24 tick of the pool
             liquidity: self.liquidity, //Current available liquidity in the tick range
@@ -766,7 +780,7 @@ impl UniswapV3Pool {
     {
         let v3_pool = IUniswapV3Pool::new(self.address, provider);
         let IUniswapV3Pool::tickSpacingReturn { _0: ts } = v3_pool.tickSpacing().call().await?;
-        Ok(ts)
+        Ok(ts.as_i32())
     }
 
     /// Fetches the current tick of the pool via static call.
@@ -792,15 +806,15 @@ impl UniswapV3Pool {
     {
         let v3_pool = IUniswapV3Pool::new(self.address, provider.clone());
 
-        let tick_info = v3_pool.ticks(tick).call().await?;
+        let tick_info = v3_pool.ticks(I24::try_from(tick).unwrap()).call().await?;
 
         Ok((
             tick_info._0,
             tick_info._1,
             tick_info._2,
             tick_info._3,
-            tick_info._4,
-            tick_info._5,
+            tick_info._4.as_i64(),
+            tick_info._5.to(),
             tick_info._6,
             tick_info._7,
         ))
@@ -847,7 +861,16 @@ impl UniswapV3Pool {
         P: Provider<T, N>,
     {
         let v3_pool = IUniswapV3Pool::new(self.address, provider);
-        Ok(v3_pool.slot0().call().await?.into())
+        let slot = v3_pool.slot0().call().await?;
+        Ok((
+            slot._0.to(),
+            slot._1.as_i32(),
+            slot._2,
+            slot._3,
+            slot._4,
+            slot._5,
+            slot._6,
+        ))
     }
 
     /// Fetches the current liquidity of the pool via static call.
@@ -875,8 +898,8 @@ impl UniswapV3Pool {
     pub fn sync_from_initialize_log(&mut self, log: Log) -> Result<(), alloy::dyn_abi::Error> {
         let initialize_event = IUniswapV3Pool::Initialize::decode_log(log.as_ref(), true)?;
 
-        self.sqrt_price = initialize_event.sqrtPriceX96;
-        self.tick = initialize_event.tick;
+        self.sqrt_price = initialize_event.sqrtPriceX96.to();
+        self.tick = initialize_event.tick.as_i32();
 
         Ok(())
     }
@@ -886,8 +909,8 @@ impl UniswapV3Pool {
         let burn_event = IUniswapV3Pool::Burn::decode_log(log.as_ref(), true)?;
 
         self.modify_position(
-            burn_event.tickLower,
-            burn_event.tickUpper,
+            burn_event.tickLower.as_i32(),
+            burn_event.tickUpper.as_i32(),
             -(burn_event.amount as i128),
         );
 
@@ -900,8 +923,8 @@ impl UniswapV3Pool {
         let mint_event = IUniswapV3Pool::Mint::decode_log(log.as_ref(), true)?;
 
         self.modify_position(
-            mint_event.tickLower,
-            mint_event.tickUpper,
+            mint_event.tickLower.as_i32(),
+            mint_event.tickUpper.as_i32(),
             mint_event.amount as i128,
         );
 
@@ -1311,9 +1334,9 @@ impl UniswapV3Pool {
     pub fn sync_from_swap_log(&mut self, log: Log) -> Result<(), alloy::sol_types::Error> {
         let swap_event = IUniswapV3Pool::Swap::decode_log(log.as_ref(), true)?;
 
-        self.sqrt_price = swap_event.sqrtPriceX96;
+        self.sqrt_price = swap_event.sqrtPriceX96.to();
         self.liquidity = swap_event.liquidity;
-        self.tick = swap_event.tick;
+        self.tick = swap_event.tick.as_i32();
 
         tracing::debug!(?swap_event, address = ?self.address, sqrt_price = ?self.sqrt_price, liquidity = ?self.liquidity, tick = ?self.tick, "UniswapV3 swap event");
 
@@ -1357,7 +1380,7 @@ impl UniswapV3Pool {
             .call()
             .await?;
 
-        Ok(fee)
+        Ok(fee.to())
     }
 
     pub async fn get_token_0<T, N, P>(&self, provider: Arc<P>) -> Result<Address, AMMError>
@@ -1451,7 +1474,7 @@ impl UniswapV3Pool {
             recipient,
             zeroForOne: zero_for_one,
             amountSpecified: amount_specified,
-            sqrtPriceLimitX96: sqrt_price_limit_x_96,
+            sqrtPriceLimitX96: sqrt_price_limit_x_96.to(),
             data: calldata.into(),
         }
         .abi_encode()
@@ -1488,7 +1511,6 @@ pub struct Tick {
     pub seconds_outside: u32,
     pub initialized: bool,
 }
-
 
 #[cfg(test)]
 mod test {
