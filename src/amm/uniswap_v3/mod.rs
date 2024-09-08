@@ -18,7 +18,7 @@ use ethers::{
 use num_bigfloat::BigFloat;
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
-use std::fmt::{write, Display, Formatter};
+use std::fmt::{Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::{
     cmp::Ordering,
@@ -1180,7 +1180,7 @@ impl UniswapV3Pool {
         let a = U512::from(a);
         let b = U512::from(b);
         let liq = amount0 * ((a * b) >> 96) / (b - a);
-        liq.try_into().map_err(|e| OverflowError)
+        liq.try_into().map_err(|_| OverflowError)
     }
 
     fn get_amount_1_delta(mut a: U256, mut b: U256, liq: i128) -> I256 {
