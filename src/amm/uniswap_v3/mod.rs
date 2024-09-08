@@ -8,7 +8,7 @@ use crate::{
 use async_trait::async_trait;
 use ethers::contract::Lazy;
 use ethers::prelude::abigen;
-use ethers::types::U512;
+use ethers::types::{U128, U512};
 use ethers::{
     abi::{ethabi::Bytes, RawLog, Token},
     prelude::{AbiError, EthEvent},
@@ -18,6 +18,7 @@ use ethers::{
 use num_bigfloat::BigFloat;
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
+use std::fmt::{write, Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::{
     cmp::Ordering,
@@ -127,6 +128,15 @@ pub struct Info {
     pub liquidity_gross: u128,
     pub liquidity_net: i128,
     pub initialized: bool,
+}
+
+#[derive(Debug)]
+pub struct OverflowError;
+
+impl Display for OverflowError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Overflow")
+    }
 }
 
 impl Info {
@@ -921,7 +931,7 @@ impl UniswapV3Pool {
         amount1: U256,
         tick_lower: i32,
         tick_upper: i32,
-    ) -> u128 {
+    ) -> Result<u128, OverflowError> {
         let liquidity;
 
         if self.tick < tick_lower {
@@ -929,7 +939,8 @@ impl UniswapV3Pool {
                 Self::get_sqrt_ratio_at_tick(tick_lower),
                 Self::get_sqrt_ratio_at_tick(tick_upper),
                 amount0,
-            );
+            )?
+            .as_u128();
         }
         //if the tick is between the tick lower and tick upper, update the liquidity between the ticks
         else if self.tick < tick_upper {
@@ -937,13 +948,15 @@ impl UniswapV3Pool {
                 self.sqrt_price,
                 Self::get_sqrt_ratio_at_tick(tick_upper),
                 amount0,
-            );
+            )?
+            .as_u128();
 
             let liquidity_upper = Self::get_amount_1_delta_inverted(
                 Self::get_sqrt_ratio_at_tick(tick_lower),
                 self.sqrt_price,
                 amount1,
-            );
+            )?
+            .as_u128();
             // take the minimum value
             liquidity = liquidity_lower.min(liquidity_upper);
         } else {
@@ -951,7 +964,8 @@ impl UniswapV3Pool {
                 Self::get_sqrt_ratio_at_tick(tick_lower),
                 Self::get_sqrt_ratio_at_tick(tick_upper),
                 amount1,
-            );
+            )?
+            .as_u128();
         }
 
         // Temporary check for correctness
@@ -989,7 +1003,7 @@ impl UniswapV3Pool {
         assert!(a0.into_raw() <= amount0);
         assert!(a1.into_raw() <= amount1);
 
-        liquidity
+        Ok(liquidity)
     }
 
     pub fn get_next_tick(&self, dir: i32) -> i32 {
@@ -1154,7 +1168,11 @@ impl UniswapV3Pool {
         return amount0;
     }
 
-    fn get_amount_0_delta_inverted(mut a: U256, mut b: U256, amount0: U256) -> u128 {
+    fn get_amount_0_delta_inverted(
+        mut a: U256,
+        mut b: U256,
+        amount0: U256,
+    ) -> Result<U128, OverflowError> {
         if a > b {
             (a, b) = (b, a);
         }
@@ -1162,7 +1180,7 @@ impl UniswapV3Pool {
         let a = U512::from(a);
         let b = U512::from(b);
         let liq = amount0 * ((a * b) >> 96) / (b - a);
-        return liq.as_u128();
+        liq.try_into().map_err(|e| OverflowError)
     }
 
     fn get_amount_1_delta(mut a: U256, mut b: U256, liq: i128) -> I256 {
@@ -1195,13 +1213,17 @@ impl UniswapV3Pool {
         return amount1;
     }
 
-    fn get_amount_1_delta_inverted(mut a: U256, mut b: U256, amount1: U256) -> u128 {
+    fn get_amount_1_delta_inverted(
+        mut a: U256,
+        mut b: U256,
+        amount1: U256,
+    ) -> Result<U128, OverflowError> {
         if a > b {
             (a, b) = (b, a);
         }
         let denom = U512::from(b - a);
-
-        return ((U512::from(amount1) << 96) / denom).as_u128();
+        let res = ((U512::from(amount1) << 96) / denom).try_into();
+        res.map_err(|_| OverflowError)
     }
 
     pub fn modify_position(
