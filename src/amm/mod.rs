@@ -20,9 +20,8 @@ use alloy::{
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::errors::{AMMError, ArithmeticError, EventLogError, SwapSimulationError};
-
 use self::{erc_4626::ERC4626Vault, uniswap_v2::UniswapV2Pool, uniswap_v3::UniswapV3Pool};
+use crate::errors::{AMMError, ArithmeticError, EventLogError, SwapSimulationError};
 
 sol! {
     /// Interface of the ERC20

@@ -17,12 +17,11 @@ use futures::{stream::FuturesOrdered, StreamExt};
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
+use super::{batch_request, IUniswapV3Pool, UniswapV3Pool};
 use crate::{
     amm::{factory::AutomatedMarketMakerFactory, AutomatedMarketMaker, AMM},
     errors::{AMMError, EventLogError},
 };
-
-use super::{batch_request, IUniswapV3Pool, UniswapV3Pool};
 
 sol! {
     /// Interface of the UniswapV3Factory contract

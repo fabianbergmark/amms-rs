@@ -9,12 +9,11 @@ use alloy::{
 };
 use tracing::instrument;
 
+use super::UniswapV3Pool;
 use crate::{
     amm::{AutomatedMarketMaker, AMM},
     errors::AMMError,
 };
-
-use super::UniswapV3Pool;
 
 sol! {
     #[allow(missing_docs)]

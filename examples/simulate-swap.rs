@@ -4,7 +4,6 @@ use alloy::{
     primitives::{address, U256},
     providers::ProviderBuilder,
 };
-
 use amms::amm::{uniswap_v2::UniswapV2Pool, AutomatedMarketMaker};
 
 #[tokio::main]

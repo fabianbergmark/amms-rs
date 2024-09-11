@@ -1,10 +1,14 @@
 pub mod batch_request;
 pub mod factory;
 
-use crate::{
-    amm::{consts::*, AutomatedMarketMaker, IErc20},
-    errors::{AMMError, ArithmeticError, EventLogError, SwapSimulationError},
+use std::fmt::{Display, Formatter};
+use std::hash::{DefaultHasher, Hash, Hasher};
+use std::{
+    cmp::Ordering,
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
 };
+
 use alloy::primitives::aliases::I24;
 use alloy::primitives::ruint::UintTryFrom;
 use alloy::primitives::{U128, U512};
@@ -22,17 +26,14 @@ use async_trait::async_trait;
 use futures::{stream::FuturesOrdered, StreamExt};
 use num_bigfloat::BigFloat;
 use serde::{Deserialize, Serialize};
-use std::hash::{DefaultHasher, Hash, Hasher};
-use std::{
-    cmp::Ordering,
-    collections::{BTreeMap, HashMap},
-    sync::Arc,
-};
-use std::fmt::{Display, Formatter};
 use tracing::{instrument, log};
 use uniswap_v3_math::tick_math::{MAX_SQRT_RATIO, MAX_TICK, MIN_SQRT_RATIO, MIN_TICK};
 
 use self::factory::IUniswapV3Factory;
+use crate::{
+    amm::{consts::*, AutomatedMarketMaker, IErc20},
+    errors::{AMMError, ArithmeticError, EventLogError, SwapSimulationError},
+};
 
 sol! {
     /// Interface of the IUniswapV3Pool
@@ -1199,7 +1200,7 @@ impl UniswapV3Pool {
         let b = U512::from(b);
         let liq: U512 = amount0 * ((a * b) >> 96) / (b - a);
         if liq > U512::from(U128::MAX) {
-            return Err(OverflowError)
+            return Err(OverflowError);
         }
         Ok(U128::from(liq))
     }
@@ -1245,7 +1246,7 @@ impl UniswapV3Pool {
         let denom = U512::from(b - a);
         let res: U512 = (U512::from(amount1) << 96) / denom;
         if res > U512::from(U128::MAX) {
-            return Err(OverflowError)
+            return Err(OverflowError);
         }
         Ok(U128::from(res))
     }
@@ -1563,12 +1564,12 @@ pub struct Tick {
 #[cfg(test)]
 mod test {
 
-    use super::*;
-
     use alloy::{
         primitives::{address, U256},
         providers::ProviderBuilder,
     };
+
+    use super::*;
 
     sol! {
         /// Interface of the Quoter

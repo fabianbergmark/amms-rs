@@ -10,15 +10,14 @@ use alloy::{
     transports::Transport,
 };
 use async_trait::async_trait;
-
-use crate::{
-    amm::{factory::AutomatedMarketMakerFactory, AMM},
-    errors::AMMError,
-};
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
 use super::{batch_request, UniswapV2Pool, U256_1};
+use crate::{
+    amm::{factory::AutomatedMarketMakerFactory, AMM},
+    errors::AMMError,
+};
 
 sol! {
     /// Interface of the UniswapV2Factory contract

@@ -7,11 +7,10 @@ use std::{
 };
 
 use alloy::{network::Network, primitives::Address, providers::Provider, transports::Transport};
-
 use serde::{Deserialize, Serialize};
-
 use tokio::task::JoinHandle;
 
+use super::amms_are_congruent;
 use crate::{
     amm::{
         factory::{AutomatedMarketMakerFactory, Factory},
@@ -22,8 +21,6 @@ use crate::{
     errors::{AMMError, CheckpointError},
     filters,
 };
-
-use super::amms_are_congruent;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Checkpoint {

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use alloy::{
     dyn_abi::{DynSolType, DynSolValue},
     network::Network,
@@ -6,14 +8,12 @@ use alloy::{
     sol,
     transports::Transport,
 };
-use std::sync::Arc;
 
+use super::UniswapV2Pool;
 use crate::{
     amm::{AutomatedMarketMaker, AMM},
     errors::AMMError,
 };
-
-use super::UniswapV2Pool;
 
 sol! {
     #[allow(missing_docs)]

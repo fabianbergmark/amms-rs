@@ -1,5 +1,9 @@
 pub mod checkpoint;
 
+use std::{panic::resume_unwind, sync::Arc};
+
+use alloy::{network::Network, providers::Provider, transports::Transport};
+
 use crate::{
     amm::{
         factory::{AutomatedMarketMakerFactory, Factory},
@@ -8,10 +12,6 @@ use crate::{
     errors::AMMError,
     filters,
 };
-
-use alloy::{network::Network, providers::Provider, transports::Transport};
-
-use std::{panic::resume_unwind, sync::Arc};
 
 /// Syncs all AMMs from the supplied factories.
 ///

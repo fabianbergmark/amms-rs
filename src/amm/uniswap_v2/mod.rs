@@ -3,10 +3,6 @@ pub mod factory;
 
 use std::sync::Arc;
 
-use crate::{
-    amm::{consts::*, AutomatedMarketMaker, IErc20},
-    errors::{AMMError, ArithmeticError, EventLogError, SwapSimulationError},
-};
 use alloy::{
     network::Network,
     primitives::{Address, Bytes, B256, U256},
@@ -22,6 +18,10 @@ use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
 use self::factory::IUniswapV2Factory;
+use crate::{
+    amm::{consts::*, AutomatedMarketMaker, IErc20},
+    errors::{AMMError, ArithmeticError, EventLogError, SwapSimulationError},
+};
 
 sol! {
     /// Interface of the UniswapV2Pair
@@ -562,9 +562,8 @@ mod tests {
         providers::ProviderBuilder,
     };
 
-    use crate::amm::AutomatedMarketMaker;
-
     use super::UniswapV2Pool;
+    use crate::amm::AutomatedMarketMaker;
 
     #[test]
     fn test_swap_calldata() {

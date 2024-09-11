@@ -1,8 +1,7 @@
-use crate::errors::{AMMError, ArithmeticError, EventLogError};
-
 use alloy::{primitives::Address, rpc::types::eth::Block, transports::TransportError};
-
 use thiserror::Error;
+
+use crate::errors::{AMMError, ArithmeticError, EventLogError};
 
 #[derive(Error, Debug)]
 pub enum StateSpaceError {

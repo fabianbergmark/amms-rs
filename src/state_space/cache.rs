@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
-use crate::amm::{AutomatedMarketMaker, AMM};
+use arraydeque::{ArrayDeque, CapacityError};
 
 use super::StateChange;
-use arraydeque::{ArrayDeque, CapacityError};
+use crate::amm::{AutomatedMarketMaker, AMM};
 
 #[derive(Debug)]
 

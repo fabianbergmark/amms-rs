@@ -1,6 +1,8 @@
-use crate::amm::{AutomatedMarketMaker, AMM};
-use alloy::primitives::Address;
 use std::collections::HashSet;
+
+use alloy::primitives::Address;
+
+use crate::amm::{AutomatedMarketMaker, AMM};
 
 /// Filters out AMMs that contain a blacklisted token.
 pub fn filter_blacklisted_tokens(amms: Vec<AMM>, blacklisted_addresses: Vec<Address>) -> Vec<AMM> {

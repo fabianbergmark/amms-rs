@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use alloy::{primitives::address, providers::ProviderBuilder};
-
 use amms::{
     amm::{
         factory::Factory, uniswap_v2::factory::UniswapV2Factory,

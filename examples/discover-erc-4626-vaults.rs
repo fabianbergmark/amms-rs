@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use alloy::providers::ProviderBuilder;
-
 use amms::discovery;
 
 #[tokio::main]

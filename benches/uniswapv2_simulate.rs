@@ -1,8 +1,7 @@
 use alloy::primitives::{address, U256};
-use criterion::{criterion_group, criterion_main, Criterion};
-
 use amms::amm::uniswap_v2::UniswapV2Pool;
 use amms::amm::AutomatedMarketMaker;
+use criterion::{criterion_group, criterion_main, Criterion};
 
 /// Generate a random ether amount between `from` and `to`
 fn random_ether(from: f32, to: f32) -> u128 {

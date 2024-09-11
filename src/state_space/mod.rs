@@ -3,10 +3,13 @@ pub mod cache;
 pub mod collector;
 pub mod error;
 
-use crate::{
-    amm::{AutomatedMarketMaker, AMM},
-    errors::EventLogError,
+use std::{
+    collections::{HashMap, HashSet},
+    marker::PhantomData,
+    ops::{Deref, DerefMut},
+    sync::Arc,
 };
+
 use alloy::{
     network::Network,
     primitives::{Address, FixedBytes},
@@ -17,18 +20,17 @@ use alloy::{
 use cache::StateChangeCache;
 use error::StateSpaceError;
 use futures::StreamExt;
-use std::{
-    collections::{HashMap, HashSet},
-    marker::PhantomData,
-    ops::{Deref, DerefMut},
-    sync::Arc,
-};
 use tokio::{
     sync::{
         mpsc::{Receiver, Sender},
         RwLock,
     },
     task::JoinHandle,
+};
+
+use crate::{
+    amm::{AutomatedMarketMaker, AMM},
+    errors::EventLogError,
 };
 
 // TODO: bench this with a dashmap

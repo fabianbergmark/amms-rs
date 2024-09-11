@@ -210,12 +210,13 @@ where
 #[cfg(test)]
 mod test {
 
+    use std::{path::Path, sync::Arc};
+
     use alloy::{
         primitives::{address, uint},
         providers::ProviderBuilder,
         rpc::client::WsConnect,
     };
-    use std::{path::Path, sync::Arc};
 
     use super::*;
     use crate::amm::{

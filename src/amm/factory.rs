@@ -15,13 +15,12 @@ use async_trait::async_trait;
 use futures::stream::{FuturesUnordered, StreamExt};
 use serde::{Deserialize, Serialize};
 
-use crate::errors::{AMMError, EventLogError};
-
 use super::{
     uniswap_v2::factory::{IUniswapV2Factory, UniswapV2Factory},
     uniswap_v3::factory::{IUniswapV3Factory, UniswapV3Factory},
     AMM,
 };
+use crate::errors::{AMMError, EventLogError};
 
 #[async_trait]
 pub trait AutomatedMarketMakerFactory {

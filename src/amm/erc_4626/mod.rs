@@ -15,12 +15,11 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
+use super::uniswap_v2::{div_uu, q64_to_f64};
 use crate::{
     amm::{consts::U128_0X10000000000000000, AutomatedMarketMaker},
     errors::{AMMError, ArithmeticError, EventLogError, SwapSimulationError},
 };
-
-use super::uniswap_v2::{div_uu, q64_to_f64};
 
 sol! {
     /// Interface of the IERC4626Valut contract
@@ -315,9 +314,8 @@ mod tests {
         providers::ProviderBuilder,
     };
 
-    use crate::amm::AutomatedMarketMaker;
-
     use super::ERC4626Vault;
+    use crate::amm::AutomatedMarketMaker;
 
     #[tokio::test]
     async fn test_get_vault_data() {

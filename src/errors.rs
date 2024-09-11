@@ -1,7 +1,7 @@
+use std::time::SystemTimeError;
+
 use alloy::primitives::{Address, U256};
 use alloy::transports::TransportError;
-
-use std::time::SystemTimeError;
 use thiserror::Error;
 use tokio::task::JoinError;
 use uniswap_v3_math::error::UniswapV3MathError;

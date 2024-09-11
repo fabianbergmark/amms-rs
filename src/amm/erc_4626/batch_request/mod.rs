@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-use crate::{amm::AutomatedMarketMaker, errors::AMMError};
-
 use alloy::{
     dyn_abi::{DynSolType, DynSolValue},
     network::Network,
@@ -12,6 +10,7 @@ use alloy::{
 };
 
 use super::ERC4626Vault;
+use crate::{amm::AutomatedMarketMaker, errors::AMMError};
 
 sol! {
     #[allow(missing_docs)]
