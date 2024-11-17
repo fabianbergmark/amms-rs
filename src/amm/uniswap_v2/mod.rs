@@ -3,6 +3,8 @@ pub mod factory;
 
 use std::sync::Arc;
 
+use alloy::primitives::ruint::UintTryFrom;
+use alloy::primitives::U128;
 use alloy::{
     network::Network,
     primitives::{Address, Bytes, B256, U256},
@@ -151,8 +153,12 @@ impl AutomatedMarketMaker for UniswapV2Pool {
             tracing::trace!(?amount_out);
             tracing::trace!(?self.reserve_0, ?self.reserve_1, "pool reserves before");
 
-            self.reserve_0 += amount_in.to::<u128>();
-            self.reserve_1 -= amount_out.to::<u128>();
+            self.reserve_0 += U128::uint_try_from(amount_in)
+                .map_err(|_| SwapSimulationError::ReserveOverflow)?
+                .to::<u128>();
+            self.reserve_1 -= U128::uint_try_from(amount_out)
+                .map_err(|_| SwapSimulationError::ReserveOverflow)?
+                .to::<u128>();
 
             tracing::trace!(?self.reserve_0, ?self.reserve_1, "pool reserves after");
 
@@ -167,8 +173,12 @@ impl AutomatedMarketMaker for UniswapV2Pool {
             tracing::trace!(?amount_out);
             tracing::trace!(?self.reserve_0, ?self.reserve_1, "pool reserves before");
 
-            self.reserve_0 -= amount_out.to::<u128>();
-            self.reserve_1 += amount_in.to::<u128>();
+            self.reserve_0 -= U128::uint_try_from(amount_out)
+                .map_err(|_| SwapSimulationError::ReserveOverflow)?
+                .to::<u128>();
+            self.reserve_1 += U128::uint_try_from(amount_in)
+                .map_err(|_| SwapSimulationError::ReserveOverflow)?
+                .to::<u128>();
 
             tracing::trace!(?self.reserve_0, ?self.reserve_1, "pool reserves after");
 

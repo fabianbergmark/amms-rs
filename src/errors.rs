@@ -94,6 +94,8 @@ pub enum SwapSimulationError {
     UniswapV3MathError(#[from] UniswapV3MathError),
     #[error("Liquidity underflow")]
     LiquidityUnderflow,
+    #[error("Reserve overflow")]
+    ReserveOverflow,
 }
 
 #[derive(Error, Debug)]
