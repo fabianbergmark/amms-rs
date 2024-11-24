@@ -96,6 +96,8 @@ pub enum SwapSimulationError {
     LiquidityUnderflow,
     #[error("Reserve overflow")]
     ReserveOverflow,
+    #[error("Mixed types")]
+    MixedTypes,
 }
 
 #[derive(Error, Debug)]

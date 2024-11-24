@@ -56,7 +56,7 @@ sol! {
     }
 }
 
-const ONE: U256 = uint!(1_U256);
+pub const ONE: U256 = uint!(1_U256);
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UniswapV3Pool {
@@ -1532,11 +1532,11 @@ impl UniswapV3Pool {
 }
 
 pub struct CurrentState {
-    amount_specified_remaining: I256,
-    amount_calculated: I256,
-    sqrt_price_x_96: U256,
-    tick: i32,
-    liquidity: u128,
+    pub amount_specified_remaining: I256,
+    pub amount_calculated: I256,
+    pub sqrt_price_x_96: U256,
+    pub tick: i32,
+    pub liquidity: u128,
 }
 
 #[derive(Default)]
