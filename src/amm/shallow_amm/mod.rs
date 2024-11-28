@@ -5,7 +5,6 @@ use crate::amm::AMM;
 use crate::errors::SwapSimulationError;
 use crate::errors::SwapSimulationError::MixedTypes;
 use alloy::primitives::{Address, U256};
-use eyre::anyhow;
 
 pub mod shallow_v2;
 pub mod shallow_v3;
