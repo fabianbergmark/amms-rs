@@ -31,6 +31,7 @@ sol! {
     #[sol(rpc)]
     contract IUniswapV2Pair {
         event Sync(uint112 reserve0, uint112 reserve1);
+        event Swap(address indexed sender, uint256 amount0In, uint256 amount1In, uint256 amount0Out, uint256 amount1Out, address indexed to);
         function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast);
         function token0() external view returns (address);
         function token1() external view returns (address);
@@ -89,23 +90,27 @@ impl AutomatedMarketMaker for UniswapV2Pool {
     }
 
     fn sync_on_event_signatures(&self) -> Vec<B256> {
-        vec![IUniswapV2Pair::Sync::SIGNATURE_HASH]
+        vec![
+            IUniswapV2Pair::Sync::SIGNATURE_HASH,
+            IUniswapV2Pair::Swap::SIGNATURE_HASH,
+        ]
     }
 
     #[instrument(skip(self), level = "debug")]
     fn sync_from_log(&mut self, log: Log) -> Result<(), EventLogError> {
         let event_signature = log.topics()[0];
 
-        if event_signature == IUniswapV2Pair::Sync::SIGNATURE_HASH {
-            let sync_event = IUniswapV2Pair::Sync::decode_log(log.as_ref(), true)?;
-            //tracing::info!(reserve_0 = sync_event.reserve0, reserve_1 = sync_event.reserve1, address = ?self.address, "UniswapV2 sync event");
+        match event_signature {
+            IUniswapV2Pair::Sync::SIGNATURE_HASH => {
+                let sync_event = IUniswapV2Pair::Sync::decode_log(log.as_ref(), true)?;
 
-            self.reserve_0 = sync_event.reserve0.to();
-            self.reserve_1 = sync_event.reserve1.to();
+                self.reserve_0 = sync_event.reserve0.to();
+                self.reserve_1 = sync_event.reserve1.to();
 
-            Ok(())
-        } else {
-            Err(EventLogError::InvalidEventSignature)
+                Ok(())
+            }
+            IUniswapV2Pair::Swap::SIGNATURE_HASH => Ok(()),
+            _ => Err(EventLogError::InvalidEventSignature),
         }
     }
 
