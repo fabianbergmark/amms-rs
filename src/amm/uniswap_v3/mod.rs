@@ -675,13 +675,15 @@ impl UniswapV3Pool {
                             (U512::from(step.fee_amount) << 128) / (U512::from(self.liquidity)),
                         )
                         .expect("Failed to cast U512 to U256")
-                            * U256::from(position.liquidity);
+                            * U256::from(position.liquidity)
+                            >> 128;
                     } else {
                         position.fee1 += U256::uint_try_from(
                             (U512::from(step.fee_amount) << 128) / (U512::from(self.liquidity)),
                         )
                         .expect("Failed to cast U512 to U256")
-                            * U256::from(position.liquidity);
+                            * U256::from(position.liquidity)
+                            >> 128;
                     }
                 }
             }
@@ -1057,6 +1059,7 @@ impl UniswapV3Pool {
 
     pub fn burn_and_collect_mut(&mut self, hash: u64) -> (U256, U256) {
         if let Some(position) = self.positions.remove(&hash) {
+            assert!(position.liquidity <= (position.liquidity * 2));
             let (amount0, amount1) = self.modify_position(
                 position.tick_lower,
                 position.tick_upper,
