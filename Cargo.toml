@@ -24,7 +24,7 @@ thiserror = "1.0.63"
 tokio = { version = "1.40.0", default-features = false }
 tracing = { version = "0.1.40", features = ["log"] }
 uniswap_v3_math = { path = "../uniswap-v3-math" }
-alloy = { version = "0.3.1", features = [
+alloy = { version = "0.7.3", features = [
     "contract",
     "network",
     "provider-ws",
@@ -37,7 +37,7 @@ default = ["filters", "state-space"]
 filters = []
 state-space = ["arraydeque"]
 # TODO: Uncomment this when artemis is published as a crate
-# artemis = ["artemis-core"] 
+# artemis = ["artemis-core"]
 artemis = []
 
 [dev-dependencies]

@@ -1,10 +1,11 @@
+use alloy::primitives::{Address, U256};
+
 use crate::amm::shallow_amm::shallow_v2::ShallowV2;
 use crate::amm::shallow_amm::shallow_v3::ShallowV3;
 use crate::amm::shallow_amm::ShallowAMM::{V2, V3};
 use crate::amm::AMM;
 use crate::errors::SwapSimulationError;
 use crate::errors::SwapSimulationError::MixedTypes;
-use alloy::primitives::{Address, U256};
 
 pub mod shallow_v2;
 pub mod shallow_v3;

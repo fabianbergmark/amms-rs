@@ -1,7 +1,8 @@
-use crate::amm::uniswap_v3::{CurrentState, StepComputations, UniswapV3Pool, ONE};
-use crate::errors::SwapSimulationError;
 use alloy::primitives::{Address, I256, U256};
 use uniswap_v3_math::tick_math::{MAX_SQRT_RATIO, MAX_TICK, MIN_SQRT_RATIO, MIN_TICK};
+
+use crate::amm::uniswap_v3::{CurrentState, StepComputations, UniswapV3Pool, ONE};
+use crate::errors::SwapSimulationError;
 
 #[derive(Debug, Copy, Clone)]
 pub struct ShallowV3 {

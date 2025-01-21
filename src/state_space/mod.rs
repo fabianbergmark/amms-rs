@@ -76,7 +76,7 @@ pub struct StateSpaceManager<T, N, P> {
 impl<T, N, P> StateSpaceManager<T, N, P>
 where
     T: Transport + Clone,
-    N: Network<BlockResponse = Block>,
+    N: Network<HeaderResponse = Block, BlockResponse = Block>,
     P: Provider<T, N> + 'static,
 {
     pub fn new(amms: Vec<AMM>, provider: Arc<P>) -> Self {

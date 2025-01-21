@@ -1,7 +1,8 @@
-use crate::amm::uniswap_v2::UniswapV2Pool;
-use crate::errors::SwapSimulationError;
 use alloy::primitives::ruint::UintTryFrom;
 use alloy::primitives::{Address, U128, U256};
+
+use crate::amm::uniswap_v2::UniswapV2Pool;
+use crate::errors::SwapSimulationError;
 #[derive(Debug, Clone, Copy)]
 pub struct ShallowV2 {
     reserve_0: u128,
