@@ -19,7 +19,6 @@ use alloy::{
 };
 use cache::StateChangeCache;
 use error::StateSpaceError;
-use futures::StreamExt;
 use tokio::{
     sync::{
         mpsc::{Receiver, Sender},
@@ -125,16 +124,16 @@ where
         &self,
         buffer: usize,
     ) -> (Receiver<Block>, JoinHandle<Result<(), StateSpaceError>>) {
-        let (stream_tx, stream_rx): (Sender<Block>, Receiver<Block>) =
+        let (_stream_tx, stream_rx): (Sender<Block>, Receiver<Block>) =
             tokio::sync::mpsc::channel(buffer);
 
-        let provider = self.provider.clone();
+        let _provider = self.provider.clone();
         let stream_handle = tokio::spawn(async move {
-            let subscription = provider.subscribe_blocks().await?;
-            let mut block_stream = subscription.into_stream();
-            while let Some(block) = block_stream.next().await {
-                stream_tx.send(block).await?;
-            }
+            // let subscription = provider.subscribe_blocks().await?;
+            // let mut block_stream = subscription.into_stream();
+            // while let Some(block) = block_stream.next().await {
+            //     stream_tx.send(block).await?;
+            // }
 
             Ok::<(), StateSpaceError>(())
         });
