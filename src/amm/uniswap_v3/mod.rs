@@ -1198,6 +1198,9 @@ impl UniswapV3Pool {
         if a > b {
             (a, b) = (b, a);
         }
+        if a == b {
+            return Ok(U128::MAX);
+        }
         let amount0 = U512::from(amount0);
         let a = U512::from(a);
         let b = U512::from(b);
@@ -1246,6 +1249,10 @@ impl UniswapV3Pool {
         if a > b {
             (a, b) = (b, a);
         }
+        if a == b {
+            return Ok(U128::MAX);
+        }
+
         let denom = U512::from(b - a);
         let res: U512 = (U512::from(amount1) << 96) / denom;
         if res > U512::from(U128::MAX) {
