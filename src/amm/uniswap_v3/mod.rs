@@ -670,16 +670,17 @@ impl UniswapV3Pool {
                     && current_state.tick >= position.tick_lower
                     && current_state.tick < position.tick_upper
                 {
+                    log::trace!("step.fee_amount: {}, current_state.liquidity {}, zero_for_one {zero_for_one}, position.liquidity: {}", step.fee_amount, current_state.liquidity, position.liquidity);
                     if zero_for_one {
                         position.fee0 += U256::uint_try_from(
-                            (U512::from(step.fee_amount) << 128) / (U512::from(self.liquidity)),
+                            (U512::from(step.fee_amount) << 128) / (U512::from(current_state.liquidity)),
                         )
                         .expect("Failed to cast U512 to U256")
                             * U256::from(position.liquidity)
                             >> 128;
                     } else {
                         position.fee1 += U256::uint_try_from(
-                            (U512::from(step.fee_amount) << 128) / (U512::from(self.liquidity)),
+                            (U512::from(step.fee_amount) << 128) / (U512::from(current_state.liquidity)),
                         )
                         .expect("Failed to cast U512 to U256")
                             * U256::from(position.liquidity)
@@ -1066,6 +1067,7 @@ impl UniswapV3Pool {
                 -(position.liquidity as i128),
             );
             // Return the burned amount plus accumulated fees
+            log::trace!("fee0: {} fee1: {}", position.fee0,position.fee1);
             (
                 (-amount0).into_raw() + position.fee0,
                 (-amount1).into_raw() + position.fee1,
