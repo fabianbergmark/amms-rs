@@ -7,7 +7,6 @@ use alloy::{
     rpc::types::eth::Log,
     sol,
     sol_types::SolEvent,
-    transports::Transport,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -47,20 +46,17 @@ impl UniswapV2Factory {
         }
     }
 
-    pub async fn get_all_pairs_via_batched_calls<T, N, P>(
+    pub async fn get_all_pairs_via_batched_calls<N, P>(
         &self,
         provider: Arc<P>,
     ) -> Result<Vec<AMM>, AMMError>
     where
-        T: Transport + Clone,
         N: Network,
-        P: Provider<T, N>,
+        P: Provider<N>,
     {
         let factory = IUniswapV2Factory::new(self.address, provider.clone());
 
-        let IUniswapV2Factory::allPairsLengthReturn {
-            length: pairs_length,
-        } = factory.allPairsLength().call().await?;
+        let pairs_length = factory.allPairsLength().call().await?;
 
         let mut pairs = vec![];
         // NOTE: max batch size for this call until codesize is too large
@@ -118,20 +114,19 @@ impl AutomatedMarketMakerFactory for UniswapV2Factory {
         IUniswapV2Factory::PairCreated::SIGNATURE_HASH
     }
 
-    async fn new_amm_from_log<T, N, P>(&self, log: Log, provider: Arc<P>) -> Result<AMM, AMMError>
+    async fn new_amm_from_log<N, P>(&self, log: Log, provider: Arc<P>) -> Result<AMM, AMMError>
     where
-        T: Transport + Clone,
         N: Network,
-        P: Provider<T, N>,
+        P: Provider<N>,
     {
-        let pair_created_event = IUniswapV2Factory::PairCreated::decode_log(log.as_ref(), true)?;
+        let pair_created_event = IUniswapV2Factory::PairCreated::decode_log(log.as_ref())?;
         Ok(AMM::UniswapV2Pool(
             UniswapV2Pool::new_from_address(pair_created_event.pair, self.fee, provider).await?,
         ))
     }
 
     fn new_empty_amm_from_log(&self, log: Log) -> Result<AMM, alloy::sol_types::Error> {
-        let pair_created_event = IUniswapV2Factory::PairCreated::decode_log(log.as_ref(), true)?;
+        let pair_created_event = IUniswapV2Factory::PairCreated::decode_log(log.as_ref())?;
 
         Ok(AMM::UniswapV2Pool(UniswapV2Pool {
             address: pair_created_event.pair,
@@ -146,30 +141,28 @@ impl AutomatedMarketMakerFactory for UniswapV2Factory {
     }
 
     #[instrument(skip(self, middleware) level = "debug")]
-    async fn get_all_amms<T, N, P>(
+    async fn get_all_amms<N, P>(
         &self,
         _to_block: Option<u64>,
         middleware: Arc<P>,
         _step: u64,
     ) -> Result<Vec<AMM>, AMMError>
     where
-        T: Transport + Clone,
         N: Network,
-        P: Provider<T, N>,
+        P: Provider<N>,
     {
         self.get_all_pairs_via_batched_calls(middleware).await
     }
 
-    async fn populate_amm_data<T, N, P>(
+    async fn populate_amm_data<N, P>(
         &self,
         amms: &mut [AMM],
         _block_number: Option<u64>,
         middleware: Arc<P>,
     ) -> Result<(), AMMError>
     where
-        T: Transport + Clone,
         N: Network,
-        P: Provider<T, N>,
+        P: Provider<N>,
     {
         // Max batch size for call
         let step = 127;

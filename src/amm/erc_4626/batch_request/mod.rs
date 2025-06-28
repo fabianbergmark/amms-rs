@@ -6,7 +6,6 @@ use alloy::{
     primitives::U256,
     providers::Provider,
     sol,
-    transports::Transport,
 };
 
 use super::ERC4626Vault;
@@ -66,14 +65,13 @@ fn populate_pool_data_from_tokens(
     Some(vault)
 }
 
-pub async fn get_4626_vault_data_batch_request<T, N, P>(
+pub async fn get_4626_vault_data_batch_request<N, P>(
     vault: &mut ERC4626Vault,
     provider: Arc<P>,
 ) -> Result<(), AMMError>
 where
-    T: Transport + Clone,
     N: Network,
-    P: Provider<T, N>,
+    P: Provider<N>,
 {
     let deployer =
         IGetERC4626VaultDataBatchRequest::deploy_builder(provider, vec![vault.vault_token]);

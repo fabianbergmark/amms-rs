@@ -12,7 +12,6 @@ use alloy::{
     rpc::types::eth::Log,
     sol,
     sol_types::{SolCall, SolEvent},
-    transports::Transport,
 };
 use async_trait::async_trait;
 use num_bigfloat::BigFloat;
@@ -58,11 +57,10 @@ impl AutomatedMarketMaker for UniswapV2Pool {
     }
 
     #[instrument(skip(self, provider), level = "debug")]
-    async fn sync<T, N, P>(&mut self, provider: Arc<P>) -> Result<(), AMMError>
+    async fn sync<N, P>(&mut self, provider: Arc<P>) -> Result<(), AMMError>
     where
-        T: Transport + Clone,
         N: Network,
-        P: Provider<T, N>,
+        P: Provider<N>,
     {
         let (reserve_0, reserve_1) = self.get_reserves(provider.clone()).await?;
         tracing::info!(?reserve_0, ?reserve_1, address = ?self.address, "UniswapV2 sync");
@@ -74,15 +72,14 @@ impl AutomatedMarketMaker for UniswapV2Pool {
     }
 
     #[instrument(skip(self, provider), level = "debug")]
-    async fn populate_data<T, N, P>(
+    async fn populate_data<N, P>(
         &mut self,
         _block_number: Option<u64>,
         provider: Arc<P>,
     ) -> Result<(), AMMError>
     where
-        T: Transport + Clone,
         N: Network,
-        P: Provider<T, N>,
+        P: Provider<N>,
     {
         batch_request::get_v2_pool_data_batch_request(self, provider.clone()).await?;
 
@@ -102,7 +99,7 @@ impl AutomatedMarketMaker for UniswapV2Pool {
 
         match event_signature {
             IUniswapV2Pair::Sync::SIGNATURE_HASH => {
-                let sync_event = IUniswapV2Pair::Sync::decode_log(log.as_ref(), true)?;
+                let sync_event = IUniswapV2Pair::Sync::decode_log(log.as_ref())?;
 
                 self.reserve_0 = sync_event.reserve0.to();
                 self.reserve_1 = sync_event.reserve1.to();
@@ -225,15 +222,14 @@ impl UniswapV2Pool {
     }
 
     /// Creates a new instance of the pool from the pair address, and syncs the pool data.
-    pub async fn new_from_address<T, N, P>(
+    pub async fn new_from_address<N, P>(
         pair_address: Address,
         fee: u32,
         provider: Arc<P>,
     ) -> Result<Self, AMMError>
     where
-        T: Transport + Clone,
         N: Network,
-        P: Provider<T, N>,
+        P: Provider<N>,
     {
         let mut pool = UniswapV2Pool {
             address: pair_address,
@@ -258,21 +254,16 @@ impl UniswapV2Pool {
     /// Creates a new instance of a the pool from a `PairCreated` event log.
     ///
     /// This method syncs the pool data.
-    pub async fn new_from_log<T, N, P>(
-        log: Log,
-        fee: u32,
-        provider: Arc<P>,
-    ) -> Result<Self, AMMError>
+    pub async fn new_from_log<N, P>(log: Log, fee: u32, provider: Arc<P>) -> Result<Self, AMMError>
     where
-        T: Transport + Clone,
         N: Network,
-        P: Provider<T, N>,
+        P: Provider<N>,
     {
         let event_signature = log.data().topics()[0];
 
         if event_signature == IUniswapV2Factory::PairCreated::SIGNATURE_HASH {
             let pair_created_event =
-                factory::IUniswapV2Factory::PairCreated::decode_log(log.as_ref(), true)?;
+                factory::IUniswapV2Factory::PairCreated::decode_log(log.as_ref())?;
             UniswapV2Pool::new_from_address(pair_created_event.pair, fee, provider).await
         } else {
             Err(EventLogError::InvalidEventSignature)?
@@ -287,7 +278,7 @@ impl UniswapV2Pool {
 
         if event_signature == IUniswapV2Factory::PairCreated::SIGNATURE_HASH {
             let pair_created_event =
-                factory::IUniswapV2Factory::PairCreated::decode_log(log.as_ref(), true)?;
+                factory::IUniswapV2Factory::PairCreated::decode_log(log.as_ref())?;
 
             Ok(UniswapV2Pool {
                 address: pair_created_event.pair,
@@ -318,11 +309,10 @@ impl UniswapV2Pool {
     }
 
     /// Returns the reserves of the pool.
-    pub async fn get_reserves<T, N, P>(&self, provider: Arc<P>) -> Result<(u128, u128), AMMError>
+    pub async fn get_reserves<N, P>(&self, provider: Arc<P>) -> Result<(u128, u128), AMMError>
     where
-        T: Transport + Clone,
         N: Network,
-        P: Provider<T, N>,
+        P: Provider<N>,
     {
         tracing::trace!("getting reserves of {}", self.address);
 
@@ -344,25 +334,17 @@ impl UniswapV2Pool {
         Ok((reserve_0.to(), reserve_1.to()))
     }
 
-    pub async fn get_token_decimals<T, N, P>(
-        &mut self,
-        provider: Arc<P>,
-    ) -> Result<(u8, u8), AMMError>
+    pub async fn get_token_decimals<N, P>(&mut self, provider: Arc<P>) -> Result<(u8, u8), AMMError>
     where
-        T: Transport + Clone,
         N: Network,
-        P: Provider<T, N>,
+        P: Provider<N>,
     {
-        let IErc20::decimalsReturn {
-            _0: token_a_decimals,
-        } = IErc20::new(self.token_a, provider.clone())
+        let token_a_decimals = IErc20::new(self.token_a, provider.clone())
             .decimals()
             .call()
             .await?;
 
-        let IErc20::decimalsReturn {
-            _0: token_b_decimals,
-        } = IErc20::new(self.token_b, provider)
+        let token_b_decimals = IErc20::new(self.token_b, provider)
             .decimals()
             .call()
             .await?;
@@ -372,19 +354,18 @@ impl UniswapV2Pool {
         Ok((token_a_decimals, token_b_decimals))
     }
 
-    pub async fn get_token_0<T, N, P>(
+    pub async fn get_token_0<N, P>(
         &self,
         pair_address: Address,
         provider: Arc<P>,
     ) -> Result<Address, AMMError>
     where
-        T: Transport + Clone,
         N: Network,
-        P: Provider<T, N>,
+        P: Provider<N>,
     {
         let v2_pair = IUniswapV2Pair::new(pair_address, provider);
 
-        let IUniswapV2Pair::token0Return { _0: token0 } = match v2_pair.token0().call().await {
+        let token0 = match v2_pair.token0().call().await {
             Ok(result) => result,
             Err(contract_error) => return Err(AMMError::ContractError(contract_error)),
         };
@@ -392,19 +373,18 @@ impl UniswapV2Pool {
         Ok(token0)
     }
 
-    pub async fn get_token_1<T, N, P>(
+    pub async fn get_token_1<N, P>(
         &self,
         pair_address: Address,
         middleware: Arc<P>,
     ) -> Result<Address, AMMError>
     where
-        T: Transport + Clone,
         N: Network,
-        P: Provider<T, N>,
+        P: Provider<N>,
     {
         let v2_pair = IUniswapV2Pair::new(pair_address, middleware);
 
-        let IUniswapV2Pair::token1Return { _0: token1 } = match v2_pair.token1().call().await {
+        let token1 = match v2_pair.token1().call().await {
             Ok(result) => result,
             Err(contract_error) => return Err(AMMError::ContractError(contract_error)),
         };

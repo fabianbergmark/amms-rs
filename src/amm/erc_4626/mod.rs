@@ -9,7 +9,6 @@ use alloy::{
     rpc::types::eth::Log,
     sol,
     sol_types::SolEvent,
-    transports::Transport,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -67,11 +66,10 @@ impl AutomatedMarketMaker for ERC4626Vault {
     }
 
     #[instrument(skip(self, provider), level = "debug")]
-    async fn sync<T, N, P>(&mut self, provider: Arc<P>) -> Result<(), AMMError>
+    async fn sync<N, P>(&mut self, provider: Arc<P>) -> Result<(), AMMError>
     where
-        T: Transport + Clone,
         N: Network,
-        P: Provider<T, N>,
+        P: Provider<N>,
     {
         let (vault_reserve, asset_reserve) = self.get_reserves(provider).await?;
         tracing::debug!(vault_reserve = ?vault_reserve, asset_reserve = ?asset_reserve, address = ?self.vault_token, "ER4626 sync");
@@ -93,12 +91,12 @@ impl AutomatedMarketMaker for ERC4626Vault {
     fn sync_from_log(&mut self, log: Log) -> Result<(), EventLogError> {
         let event_signature = log.data().topics()[0];
         if event_signature == IERC4626Vault::Deposit::SIGNATURE_HASH {
-            let deposit_event = IERC4626Vault::Deposit::decode_log(log.as_ref(), true)?;
+            let deposit_event = IERC4626Vault::Deposit::decode_log(log.as_ref())?;
             self.asset_reserve += deposit_event.assets;
             self.vault_reserve += deposit_event.shares;
             tracing::debug!(asset_reserve = ?self.asset_reserve, vault_reserve = ?self.vault_reserve, address = ?self.vault_token, "ER4626 deposit event");
         } else if event_signature == IERC4626Vault::Withdraw::SIGNATURE_HASH {
-            let withdraw_filter = IERC4626Vault::Withdraw::decode_log(log.as_ref(), true)?;
+            let withdraw_filter = IERC4626Vault::Withdraw::decode_log(log.as_ref())?;
             self.asset_reserve -= withdraw_filter.assets;
             self.vault_reserve -= withdraw_filter.shares;
             tracing::debug!(asset_reserve = ?self.asset_reserve, vault_reserve = ?self.vault_reserve, address = ?self.vault_token, "ER4626 withdraw event");
@@ -110,15 +108,14 @@ impl AutomatedMarketMaker for ERC4626Vault {
     }
 
     #[instrument(skip(self, provider), level = "debug")]
-    async fn populate_data<T, N, P>(
+    async fn populate_data<N, P>(
         &mut self,
         _block_number: Option<u64>,
         provider: Arc<P>,
     ) -> Result<(), AMMError>
     where
-        T: Transport + Clone,
         N: Network,
-        P: Provider<T, N>,
+        P: Provider<N>,
     {
         batch_request::get_4626_vault_data_batch_request(self, provider.clone()).await?;
 
@@ -192,14 +189,13 @@ impl ERC4626Vault {
         }
     }
 
-    pub async fn new_from_address<T, N, P>(
+    pub async fn new_from_address<N, P>(
         vault_token: Address,
         provider: Arc<P>,
     ) -> Result<Self, AMMError>
     where
-        T: Transport + Clone,
         N: Network,
-        P: Provider<T, N>,
+        P: Provider<N>,
     {
         let mut vault = ERC4626Vault {
             vault_token,
@@ -228,28 +224,25 @@ impl ERC4626Vault {
             || self.asset_reserve.is_zero())
     }
 
-    pub async fn get_reserves<T, N, P>(&self, provider: Arc<P>) -> Result<(U256, U256), AMMError>
+    pub async fn get_reserves<N, P>(&self, provider: Arc<P>) -> Result<(U256, U256), AMMError>
     where
-        T: Transport + Clone,
         N: Network,
-        P: Provider<T, N>,
+        P: Provider<N>,
     {
         // Initialize a new instance of the vault
         let vault = IERC4626Vault::new(self.vault_token, provider);
 
         // Get the total assets in the vault
-        let IERC4626Vault::totalAssetsReturn { _0: total_assets } =
-            match vault.totalAssets().call().await {
-                Ok(total_assets) => total_assets,
-                Err(e) => return Err(AMMError::ContractError(e)),
-            };
+        let total_assets = match vault.totalAssets().call().await {
+            Ok(total_assets) => total_assets,
+            Err(e) => return Err(AMMError::ContractError(e)),
+        };
 
         // Get the total supply of the vault token
-        let IERC4626Vault::totalSupplyReturn { _0: total_supply } =
-            match vault.totalSupply().call().await {
-                Ok(total_supply) => total_supply,
-                Err(e) => return Err(AMMError::ContractError(e)),
-            };
+        let total_supply = match vault.totalSupply().call().await {
+            Ok(total_supply) => total_supply,
+            Err(e) => return Err(AMMError::ContractError(e)),
+        };
 
         Ok((total_supply, total_assets))
     }

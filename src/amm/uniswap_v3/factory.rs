@@ -10,7 +10,6 @@ use alloy::{
     rpc::types::eth::{Filter, Log},
     sol,
     sol_types::SolEvent,
-    transports::Transport,
 };
 use async_trait::async_trait;
 use futures::{stream::FuturesOrdered, StreamExt};
@@ -55,14 +54,13 @@ impl AutomatedMarketMakerFactory for UniswapV3Factory {
         IUniswapV3Factory::PoolCreated::SIGNATURE_HASH
     }
 
-    async fn new_amm_from_log<T, N, P>(&self, log: Log, provider: Arc<P>) -> Result<AMM, AMMError>
+    async fn new_amm_from_log<N, P>(&self, log: Log, provider: Arc<P>) -> Result<AMM, AMMError>
     where
-        T: Transport + Clone,
         N: Network,
-        P: Provider<T, N>,
+        P: Provider<N>,
     {
         if let Some(block_number) = log.block_number {
-            let pool_created_filter = IUniswapV3Factory::PoolCreated::decode_log(&log.inner, true)?;
+            let pool_created_filter = IUniswapV3Factory::PoolCreated::decode_log(&log.inner)?;
             Ok(AMM::UniswapV3Pool(
                 UniswapV3Pool::new_from_address(pool_created_filter.pool, block_number, provider)
                     .await?,
@@ -72,16 +70,15 @@ impl AutomatedMarketMakerFactory for UniswapV3Factory {
         }
     }
 
-    async fn get_all_amms<T, N, P>(
+    async fn get_all_amms<N, P>(
         &self,
         to_block: Option<u64>,
         provider: Arc<P>,
         step: u64,
     ) -> Result<Vec<AMM>, AMMError>
     where
-        T: Transport + Clone,
         N: Network,
-        P: Provider<T, N>,
+        P: Provider<N>,
     {
         if let Some(block) = to_block {
             self.get_all_pools_from_logs(block, step, provider).await
@@ -91,16 +88,15 @@ impl AutomatedMarketMakerFactory for UniswapV3Factory {
     }
 
     #[instrument(skip(self, amms, provider) level = "debug")]
-    async fn populate_amm_data<T, N, P>(
+    async fn populate_amm_data<N, P>(
         &self,
         amms: &mut [AMM],
         block_number: Option<u64>,
         provider: Arc<P>,
     ) -> Result<(), AMMError>
     where
-        T: Transport + Clone,
         N: Network,
-        P: Provider<T, N>,
+        P: Provider<N>,
     {
         if let Some(block_number) = block_number {
             // Max batch size for call
@@ -121,7 +117,7 @@ impl AutomatedMarketMakerFactory for UniswapV3Factory {
     }
 
     fn new_empty_amm_from_log(&self, log: Log) -> Result<AMM, alloy::sol_types::Error> {
-        let pool_created_event = IUniswapV3Factory::PoolCreated::decode_log(&log.inner, true)?;
+        let pool_created_event = IUniswapV3Factory::PoolCreated::decode_log(&log.inner)?;
 
         Ok(AMM::UniswapV3Pool(UniswapV3Pool {
             address: pool_created_event.pool,
@@ -150,16 +146,15 @@ impl UniswapV3Factory {
     }
 
     // Function to get all pair created events for a given Dex factory address and sync pool data
-    pub async fn get_all_pools_from_logs<T, N, P>(
+    pub async fn get_all_pools_from_logs<N, P>(
         self,
         to_block: u64,
         step: u64,
         provider: Arc<P>,
     ) -> Result<Vec<AMM>, AMMError>
     where
-        T: Transport + Clone,
         N: Network,
-        P: Provider<T, N>,
+        P: Provider<N>,
     {
         // Unwrap can be used here because the creation block was verified within `Dex::new()`
         let mut from_block = self.creation_block;

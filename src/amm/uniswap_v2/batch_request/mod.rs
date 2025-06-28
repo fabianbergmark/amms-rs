@@ -6,7 +6,6 @@ use alloy::{
     primitives::{Address, U256},
     providers::Provider,
     sol,
-    transports::Transport,
 };
 
 use super::UniswapV2Pool;
@@ -44,16 +43,15 @@ fn populate_pool_data_from_tokens(
     Some(pool)
 }
 
-pub async fn get_pairs_batch_request<T, N, P>(
+pub async fn get_pairs_batch_request<N, P>(
     factory: Address,
     from: U256,
     step: U256,
     provider: Arc<P>,
 ) -> Result<Vec<Address>, AMMError>
 where
-    T: Transport + Clone,
     N: Network,
-    P: Provider<T, N>,
+    P: Provider<N>,
 {
     let deployer = IGetUniswapV2PairsBatchRequest::deploy_builder(provider, from, step, factory);
     let res = deployer.call_raw().await?;
@@ -75,14 +73,13 @@ where
     Ok(pairs)
 }
 
-pub async fn get_amm_data_batch_request<T, N, P>(
+pub async fn get_amm_data_batch_request<N, P>(
     amms: &mut [AMM],
     provider: Arc<P>,
 ) -> Result<(), AMMError>
 where
-    T: Transport + Clone,
     N: Network,
-    P: Provider<T, N>,
+    P: Provider<N>,
 {
     let mut target_addresses = vec![];
     for amm in amms.iter() {
@@ -133,14 +130,13 @@ where
     Ok(())
 }
 
-pub async fn get_v2_pool_data_batch_request<T, N, P>(
+pub async fn get_v2_pool_data_batch_request<N, P>(
     pool: &mut UniswapV2Pool,
     provider: Arc<P>,
 ) -> Result<(), AMMError>
 where
-    T: Transport + Clone,
     N: Network,
-    P: Provider<T, N>,
+    P: Provider<N>,
 {
     let deployer = IGetUniswapV2PoolDataBatchRequest::deploy_builder(provider, vec![pool.address]);
     let res = deployer.call_raw().await?;
