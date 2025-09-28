@@ -1,15 +1,20 @@
 pub mod batch_request;
 pub mod factory;
+pub mod tick;
+pub mod liquidity_math;
+pub mod util;
+pub mod position;
 
 use std::fmt::{Display, Formatter};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::{
     cmp::Ordering,
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap },
     sync::Arc,
 };
 
 use alloy::primitives::aliases::I24;
+use alloy::primitives::map::HashMap;
 use alloy::primitives::ruint::UintTryFrom;
 use alloy::primitives::{U128, U512};
 use alloy::{
@@ -24,9 +29,12 @@ use alloy::{
 use async_trait::async_trait;
 use futures::{stream::FuturesOrdered, StreamExt};
 use num_bigfloat::BigFloat;
+use position::Position;
 use serde::{Deserialize, Serialize};
+use tick::Tick;
 use tracing::{instrument, log};
 use uniswap_v3_math::tick_math::{MAX_SQRT_RATIO, MAX_TICK, MIN_SQRT_RATIO, MIN_TICK};
+use util::require;
 
 use self::factory::IUniswapV3Factory;
 use crate::{
@@ -70,17 +78,20 @@ pub struct UniswapV3Pool {
     pub tick: i32,
     pub tick_spacing: i32,
     pub tick_bitmap: HashMap<i16, U256>,
-    pub ticks: HashMap<i32, Info>,
+    pub ticks: HashMap<i32, Tick>,
     #[serde(skip)]
-    pub positions: HashMap<u64, Position>,
+    pub positions: HashMap<(Address, i32,i32), Position>,
+    pub fee_growth_global_0_x128: U256,
+    pub fee_growth_global_1_x128: U256,
+    pub max_liquidity_per_tick: u128
 }
+
 #[derive(Debug, Clone, Default, Copy)]
-pub struct Position {
+struct ModifyPositionParams {
+    owner: Address,
     tick_lower: i32,
     tick_upper: i32,
-    liquidity: u128,
-    fee0: U256,
-    fee1: U256,
+    liquidity_delta: i128,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -379,6 +390,7 @@ impl UniswapV3Pool {
                     .get_logs(
                         &Filter::new()
                             .event_signature(vec![
+                                IUniswapV3Pool::Initialize::SIGNATURE_HASH,
                                 IUniswapV3Pool::Burn::SIGNATURE_HASH,
                                 IUniswapV3Pool::Mint::SIGNATURE_HASH,
                             ])
@@ -1013,10 +1025,21 @@ impl UniswapV3Pool {
 
     pub fn mint_mut(
         &mut self,
-        amount: u128,
+        recipient: Address,
         tick_lower: i32,
         tick_upper: i32,
-    ) -> (u64, (U256, U256)) {
+        amount: u128,
+    ) -> Result<(U256, U256), AMMError> {
+        if amount <= 0 {
+            return Err(AMMError::LogicError("Mint amount must be larger than zero"))
+        }
+        let (amount0Int, amount1Int) = self.modify_position(tick_lower, tick_upper, liquidity_delta)
+        let p = ModifyPositionParams {
+            owner: recipient,
+            tick_lower,
+            tick_upper,
+            liquidity_delta: amount as i128,
+        };
         let position = Position {
             tick_lower,
             tick_upper,
@@ -1029,7 +1052,7 @@ impl UniswapV3Pool {
         let hash = hasher.finish();
         self.positions.insert(hash, position);
         let (amount0, amount1) = self.modify_position(tick_lower, tick_upper, amount as i128);
-        (hash, (amount0.into_raw(), amount1.into_raw()))
+        Ok((amount0.into_raw(), amount1.into_raw()))
     }
 
     pub fn burn_and_collect_mut(&mut self, hash: u64) -> (U256, U256) {
@@ -1239,9 +1262,7 @@ impl UniswapV3Pool {
 
     pub fn modify_position(
         &mut self,
-        tick_lower: i32,
-        tick_upper: i32,
-        liquidity_delta: i128,
+        params: ModifyPositionParams,
     ) -> (I256, I256) {
         //We are only using this function when a mint or burn event is emitted,
         //therefore we do not need to checkTicks as that has happened before the event is emitted
@@ -1287,83 +1308,52 @@ impl UniswapV3Pool {
         return (amount0, amount1);
     }
 
-    pub fn update_position(&mut self, tick_lower: i32, tick_upper: i32, liquidity_delta: i128) {
+    pub fn update_position(&mut self, owner: Address, tick_lower: i32, tick_upper: i32, liquidity_delta: i128, tick: i32) -> Result<Position, AMMError> {
+        let position = self.positions.entry((owner, tick_lower, tick_upper)).or_default();
+
+        let fee_growth_global_0_x128 = self.fee_growth_global_0_x128;
+        let fee_growth_global_1_x128 = self.fee_growth_global_1_x128;
+
         let mut flipped_lower = false;
         let mut flipped_upper = false;
-
         if liquidity_delta != 0 {
-            flipped_lower = self.update_tick(tick_lower, liquidity_delta, false);
-            flipped_upper = self.update_tick(tick_upper, liquidity_delta, true);
+            // todo: add observations
+
+            flipped_lower = Tick::update(&mut self.ticks, tick_lower, tick, liquidity_delta, fee_growth_global_0_x128, fee_growth_global_1_x128, Default::default(), Default::default(), 0, false, self.max_liquidity_per_tick)?;
+            flipped_upper = Tick::update(&mut self.ticks, tick_upper, tick, liquidity_delta, fee_growth_global_0_x128, fee_growth_global_1_x128, Default::default(), Default::default(), 0, true, self.max_liquidity_per_tick)?;
             if flipped_lower {
-                self.flip_tick(tick_lower, self.tick_spacing);
+                Self::flip_tick(&mut self.tick_bitmap, tick_lower, self.tick_spacing);
             }
             if flipped_upper {
-                self.flip_tick(tick_upper, self.tick_spacing);
+                Self::flip_tick( &mut self.tick_bitmap,tick_upper, self.tick_spacing);
             }
         }
+
+        let (fee_growth_inside_0_x128, fee_growth_inside_1_x128) =
+            Tick::get_fee_growth_inside(&mut self.ticks, tick_lower, tick_upper, tick, fee_growth_global_0_x128, fee_growth_global_1_x128);
+
+        position.update(liquidity_delta, fee_growth_inside_0_x128, fee_growth_inside_1_x128);
 
         if liquidity_delta < 0 {
             if flipped_lower {
                 self.ticks.remove(&tick_lower);
             }
-
             if flipped_upper {
                 self.ticks.remove(&tick_upper);
             }
         }
+
+        Ok(*position)
     }
+    
 
-    pub fn update_tick(&mut self, tick: i32, liquidity_delta: i128, upper: bool) -> bool {
-        let info = match self.ticks.get_mut(&tick) {
-            Some(info) => info,
-            None => {
-                self.ticks.insert(tick, Info::default());
-                self.ticks
-                    .get_mut(&tick)
-                    .expect("Tick does not exist in ticks")
-            }
-        };
-
-        let liquidity_gross_before = info.liquidity_gross;
-
-        let liquidity_gross_after = if liquidity_delta < 0 {
-            liquidity_gross_before - ((-liquidity_delta) as u128)
-        } else {
-            liquidity_gross_before + (liquidity_delta as u128)
-        };
-
-        // we do not need to check if liqudity_gross_after > maxLiquidity because we are only calling update tick on a burn or mint log.
-        // this should already be validated when a log is
-        let flipped = (liquidity_gross_after == 0) != (liquidity_gross_before == 0);
-
-        if liquidity_gross_before == 0 {
-            info.initialized = true;
-        }
-
-        info.liquidity_gross = liquidity_gross_after;
-
-        info.liquidity_net = if upper {
-            info.liquidity_net - liquidity_delta
-        } else {
-            info.liquidity_net + liquidity_delta
-        };
-
-        flipped
-    }
-
-    pub fn flip_tick(&mut self, tick: i32, tick_spacing: i32) {
-        if tick % self.tick_spacing != 0 {
-            log::warn!("Flip tick on non spaced tick, disallowed!")
-        }
+    pub fn flip_tick(tick_bitmap: &mut HashMap<i16, U256>, tick: i32, tick_spacing: i32) {
+        require(tick % tick_spacing == 0, "");
         let (word_pos, bit_pos) = uniswap_v3_math::tick_bitmap::position(tick / tick_spacing);
         let mask = ONE << bit_pos;
-
-        if let Some(word) = self.tick_bitmap.get_mut(&word_pos) {
-            *word ^= mask;
-        } else {
-            self.tick_bitmap.insert(word_pos, mask);
-        }
-    }
+        *tick_bitmap.entry(word_pos).or_default() ^= mask;
+    } 
+    
 
     /// Updates the pool state from a swap event log.
     pub fn sync_from_swap_log(&mut self, log: Log) -> Result<(), alloy::sol_types::Error> {
@@ -1523,17 +1513,6 @@ pub struct StepComputations {
     pub amount_in: U256,
     pub amount_out: U256,
     pub fee_amount: U256,
-}
-
-pub struct Tick {
-    pub liquidity_gross: u128,
-    pub liquidity_net: i128,
-    pub fee_growth_outside_0_x_128: U256,
-    pub fee_growth_outside_1_x_128: U256,
-    pub tick_cumulative_outside: U256,
-    pub seconds_per_liquidity_outside_x_128: U256,
-    pub seconds_outside: u32,
-    pub initialized: bool,
 }
 
 #[cfg(test)]
