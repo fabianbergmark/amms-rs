@@ -7,11 +7,11 @@ use super::{liquidity_math, util::require};
 
 #[derive(Debug, Clone, Default, Copy)]
 pub struct Position {
-    liquidity: u128,
-    fee_growth_inside_0_last_x128: U256,
-    fee_growth_inside_1_last_x128: U256,
-    tokens_owed0: u128,
-    tokens_owed1: u128,
+    pub liquidity: u128,
+    pub fee_growth_inside_0_last_x128: U256,
+    pub fee_growth_inside_1_last_x128: U256,
+    pub tokens_owed0: u128,
+    pub tokens_owed1: u128,
 }
 
 impl Position {

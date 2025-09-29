@@ -7,6 +7,7 @@ pub mod position;
 
 use std::fmt::{Display, Formatter};
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::ops::BitOr;
 use std::{
     cmp::Ordering,
     collections::{BTreeMap },
@@ -908,12 +909,9 @@ impl UniswapV3Pool {
     pub fn sync_from_burn_log(&mut self, log: Log) -> Result<(), alloy::dyn_abi::Error> {
         let burn_event = IUniswapV3Pool::Burn::decode_log(log.as_ref())?;
 
-        self.modify_position(
-            burn_event.tickLower.as_i32(),
-            burn_event.tickUpper.as_i32(),
-            -(burn_event.amount as i128),
-        );
-
+        if let Err(e) =self.burn(burn_event.owner, i32::try_from(burn_event.tickLower).unwrap(), i32::try_from(burn_event.tickUpper).unwrap(), burn_event.amount) {
+            tracing::warn!(?e);
+        }
         tracing::debug!(?burn_event, address = ?self.address, sqrt_price = ?self.sqrt_price, liquidity = ?self.liquidity, tick = ?self.tick, "UniswapV3 burn event");
         Ok(())
     }
@@ -922,11 +920,9 @@ impl UniswapV3Pool {
     pub fn sync_from_mint_log(&mut self, log: Log) -> Result<(), alloy::dyn_abi::Error> {
         let mint_event = IUniswapV3Pool::Mint::decode_log(log.as_ref())?;
 
-        self.modify_position(
-            mint_event.tickLower.as_i32(),
-            mint_event.tickUpper.as_i32(),
-            mint_event.amount as i128,
-        );
+        if let Err(e) =self.mint(mint_event.owner, i32::try_from(mint_event.tickLower).unwrap(), i32::try_from(mint_event.tickUpper).unwrap(), mint_event.amount) {
+            tracing::warn!(?e);
+        }
 
         tracing::debug!(?mint_event, address = ?self.address, sqrt_price = ?self.sqrt_price, liquidity = ?self.liquidity, tick = ?self.tick, "UniswapV3 mint event");
 
@@ -1023,55 +1019,59 @@ impl UniswapV3Pool {
         compressed * self.tick_spacing
     }
 
-    pub fn mint_mut(
+    pub fn mint(
         &mut self,
         recipient: Address,
         tick_lower: i32,
         tick_upper: i32,
         amount: u128,
     ) -> Result<(U256, U256), AMMError> {
-        if amount <= 0 {
-            return Err(AMMError::LogicError("Mint amount must be larger than zero"))
-        }
-        let (amount0Int, amount1Int) = self.modify_position(tick_lower, tick_upper, liquidity_delta)
-        let p = ModifyPositionParams {
-            owner: recipient,
-            tick_lower,
-            tick_upper,
-            liquidity_delta: amount as i128,
-        };
-        let position = Position {
-            tick_lower,
-            tick_upper,
-            liquidity: amount,
-            fee0: U256::ZERO,
-            fee1: U256::ZERO,
-        };
-        let mut hasher = DefaultHasher::new();
-        (position.tick_lower, position.tick_upper, position.liquidity).hash(&mut hasher);
-        let hash = hasher.finish();
-        self.positions.insert(hash, position);
-        let (amount0, amount1) = self.modify_position(tick_lower, tick_upper, amount as i128);
-        Ok((amount0.into_raw(), amount1.into_raw()))
+        require(amount > 0, "mint: amount must be larger than zero");
+        let (_,amount_0_int, amount_1_int) = self.modify_position(ModifyPositionParams { owner: recipient, tick_lower, tick_upper, liquidity_delta: amount as i128 })?;
+
+        let amount0 = amount_0_int.into_raw();
+        let amount1 = amount_1_int.into_raw();
+
+        Ok((amount0,amount1))
     }
 
-    pub fn burn_and_collect_mut(&mut self, hash: u64) -> (U256, U256) {
-        if let Some(position) = self.positions.remove(&hash) {
-            assert!(position.liquidity <= (position.liquidity * 2));
-            let (amount0, amount1) = self.modify_position(
-                position.tick_lower,
-                position.tick_upper,
-                -(position.liquidity as i128),
-            );
-            // Return the burned amount plus accumulated fees
-            log::trace!("fee0: {} fee1: {}", position.fee0, position.fee1);
-            (
-                (-amount0).into_raw() + position.fee0,
-                (-amount1).into_raw() + position.fee1,
-            )
+
+    pub fn collect(&mut self, recipient: Address, tick_lower: i32, tick_upper: i32, amount_0_requested: u128, amount_1_requested: u128) -> (u128, u128) {
+        let position = self.positions.entry((recipient, tick_lower, tick_upper)).or_default();
+
+        let amount0 = if amount_0_requested > position.tokens_owed0 {
+            position.tokens_owed0
         } else {
-            (U256::ZERO, U256::ZERO)
+            amount_0_requested
+        };
+        let amount1 = if amount_1_requested > position.tokens_owed1 {
+            position.tokens_owed1
+        } else {
+            amount_1_requested
+        };
+
+        if amount0 > 0 {
+            position.tokens_owed0 -= amount0
         }
+        if amount1 > 0 {
+            position.tokens_owed1 -= amount1
+        }
+        (amount0,amount1)
+    }
+
+    pub fn burn(&mut self, owner: Address, tick_lower: i32, tick_upper: i32, amount: u128) -> Result<(U256, U256), AMMError> {
+        let (_, amount_0_int, amount_1_int) = self.modify_position(ModifyPositionParams { owner, tick_lower, tick_upper, liquidity_delta: -(amount as i128) })?;
+        let position = self.positions.entry((owner, tick_lower,tick_upper)).or_default();
+
+        let amount0 = (-amount_0_int).into_raw();
+        let amount1 = (-amount_1_int).into_raw();
+
+        if amount0 > U256::ZERO || amount1 > U256::ZERO {
+            position.tokens_owed0 += u128::try_from(amount0).unwrap();
+            position.tokens_owed1 += u128::try_from(amount1).unwrap();
+        }
+
+        Ok((amount0,amount1))
     }
 
     fn get_sqrt_ratio_at_tick(tick: i32) -> U256 {
@@ -1263,49 +1263,50 @@ impl UniswapV3Pool {
     pub fn modify_position(
         &mut self,
         params: ModifyPositionParams,
-    ) -> (I256, I256) {
-        //We are only using this function when a mint or burn event is emitted,
-        //therefore we do not need to checkTicks as that has happened before the event is emitted
-        let mut amount0 = I256::ZERO;
-        let mut amount1 = I256::ZERO;
-        self.update_position(tick_lower, tick_upper, liquidity_delta);
-        if liquidity_delta != 0 {
-            if self.tick < tick_lower {
+    ) -> Result<(Position, I256, I256), AMMError> {
+        // todo: checkTicks(params.tick_lower, params.tick_upper)
+        
+        let position = self.update_position(params.owner, params.tick_lower, params.tick_upper, params.liquidity_delta, self.tick)?;
+
+        let mut amount0 = Default::default();
+        let mut amount1 = Default::default();
+        if params.liquidity_delta != 0 {
+            if self.tick < params.tick_lower {
                 amount0 = Self::get_amount_0_delta(
-                    Self::get_sqrt_ratio_at_tick(tick_lower),
-                    Self::get_sqrt_ratio_at_tick(tick_upper),
-                    liquidity_delta,
+                    Self::get_sqrt_ratio_at_tick(params.tick_lower),
+                    Self::get_sqrt_ratio_at_tick(params.tick_upper),
+                    params.liquidity_delta,
                 )
             }
             //if the tick is between the tick lower and tick upper, update the liquidity between the ticks
-            else if self.tick < tick_upper {
+            else if self.tick < params.tick_upper {
                 let liquidity_before = self.liquidity;
 
                 amount0 = Self::get_amount_0_delta(
                     self.sqrt_price,
-                    Self::get_sqrt_ratio_at_tick(tick_upper),
-                    liquidity_delta,
+                    Self::get_sqrt_ratio_at_tick(params.tick_upper),
+                    params.liquidity_delta,
                 );
                 amount1 = Self::get_amount_1_delta(
-                    Self::get_sqrt_ratio_at_tick(tick_lower),
+                    Self::get_sqrt_ratio_at_tick(params.tick_lower),
                     self.sqrt_price,
-                    liquidity_delta,
+                    params.liquidity_delta,
                 );
 
-                self.liquidity = if liquidity_delta < 0 {
-                    liquidity_before - ((-liquidity_delta) as u128)
+                self.liquidity = if params.liquidity_delta < 0 {
+                    liquidity_before - ((-params.liquidity_delta) as u128)
                 } else {
-                    liquidity_before + (liquidity_delta as u128)
+                    liquidity_before + (params.liquidity_delta as u128)
                 }
             } else {
                 amount1 = Self::get_amount_1_delta(
-                    Self::get_sqrt_ratio_at_tick(tick_lower),
-                    Self::get_sqrt_ratio_at_tick(tick_upper),
-                    liquidity_delta,
+                    Self::get_sqrt_ratio_at_tick(params.tick_lower),
+                    Self::get_sqrt_ratio_at_tick(params.tick_upper),
+                    params.liquidity_delta,
                 )
             }
         }
-        return (amount0, amount1);
+        return Ok((position, amount0, amount1));
     }
 
     pub fn update_position(&mut self, owner: Address, tick_lower: i32, tick_upper: i32, liquidity_delta: i128, tick: i32) -> Result<Position, AMMError> {
