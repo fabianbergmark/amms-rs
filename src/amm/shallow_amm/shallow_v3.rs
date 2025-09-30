@@ -1,7 +1,7 @@
 use alloy::primitives::{Address, I256, U256};
 use uniswap_v3_math::tick_math::{MAX_SQRT_RATIO, MAX_TICK, MIN_SQRT_RATIO, MIN_TICK};
 
-use crate::amm::uniswap_v3::{CurrentState, StepComputations, UniswapV3Pool, ONE};
+use crate::amm::uniswap_v3::{StepComputations, SwapState, UniswapV3Pool, ONE};
 use crate::errors::SwapSimulationError;
 
 #[derive(Debug, Copy, Clone)]
@@ -38,7 +38,7 @@ impl ShallowV3 {
         };
 
         //Initialize a mutable state state struct to hold the dynamic simulated state of the pool
-        let mut current_state = CurrentState {
+        let mut current_state = SwapState {
             sqrt_price_x_96: self.sqrt_price, //Active price on the pool
             amount_calculated: I256::ZERO,    //Amount of token_out that has been calculated
             amount_specified_remaining: I256::from_raw(amount_in), //Amount of token_in that has not been swapped

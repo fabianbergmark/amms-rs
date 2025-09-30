@@ -11,8 +11,8 @@ pub struct Tick {
     pub liquidity_net: i128,
     pub fee_growth_outside_0_x128: U256,
     pub fee_growth_outside_1_x128: U256,
-    pub tick_cumulative_outside: u64,
-    pub seconds_per_liquidity_outside_x128: U160,
+    pub tick_cumulative_outside: i64,
+    pub seconds_per_liquidity_outside_x128: U256,
     pub seconds_outside: u32,
     pub initialized: bool,
 }
@@ -68,7 +68,7 @@ impl Tick {
         liquidity_delta: i128,
         fee_growth_global_0_x128: U256,
         fee_growth_global_1_x128: U256,
-        seconds_per_liquidity_cumulative_x128: U160,
+        seconds_per_liquidity_cumulative_x128: U256,
         tick_cumulative: u64,
         time: u32,
         upper: bool,
@@ -112,8 +112,8 @@ impl Tick {
         tick: i32,
         fee_growth_global_0_x128: U256,
         fee_growth_global_1_x128: U256,
-        seconds_per_liquidity_cumulative_x128: U160,
-        tick_cumulative: u64,
+        seconds_per_liquidity_cumulative_x128: U256,
+        tick_cumulative: i64,
         time: u32,
     ) -> i128 {
         let info = ticks.entry(tick).or_default();
