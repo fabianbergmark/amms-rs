@@ -1,4 +1,4 @@
-use alloy::primitives::{aliases::U56, map::HashMap, U160, U256};
+use alloy::primitives::{map::HashMap, U256};
 use serde::{Deserialize, Serialize};
 
 use crate::errors::AMMError;
@@ -69,7 +69,7 @@ impl Tick {
         fee_growth_global_0_x128: U256,
         fee_growth_global_1_x128: U256,
         seconds_per_liquidity_cumulative_x128: U256,
-        tick_cumulative: u64,
+        tick_cumulative: i64,
         time: u32,
         upper: bool,
         max_liquidity: u128,
@@ -80,7 +80,7 @@ impl Tick {
         let liquidity_gross_after =
             liquidity_math::add_delta(liquidity_gross_before, liquidity_delta)?;
 
-        require(liquidity_gross_after <= max_liquidity, "LO");
+        require(liquidity_gross_after <= max_liquidity, "LO")?;
 
         let flipped = (liquidity_gross_after == 0) != (liquidity_gross_before == 0);
 

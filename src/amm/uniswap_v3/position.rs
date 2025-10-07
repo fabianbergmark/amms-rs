@@ -1,5 +1,5 @@
 use alloy::primitives::U256;
-use uniswap_v3_math::{full_math, sqrt_price_math::FIXED_POINT_96_RESOLUTION};
+use uniswap_v3_math::full_math;
 
 use crate::errors::AMMError;
 
@@ -23,7 +23,7 @@ impl Position {
     ) -> Result<(), AMMError> {
         let liquidity_next;
         if liquidity_delta == 0 {
-            require(self.liquidity > 0, "NP");
+            require(self.liquidity > 0, "NP")?;
             liquidity_next = self.liquidity;
         } else {
             liquidity_next = liquidity_math::add_delta(self.liquidity, liquidity_delta)?;
