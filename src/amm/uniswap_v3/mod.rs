@@ -32,7 +32,7 @@ use position::Position;
 use serde::{Deserialize, Serialize};
 use tick::Tick;
 use tracing::instrument;
-use uniswap_v3_math::full_math::mul_div;
+use uniswap_v3_math::full_math::{mul_div, mul_div_rounding_up};
 use uniswap_v3_math::tick_math::{MAX_SQRT_RATIO, MAX_TICK, MIN_SQRT_RATIO, MIN_TICK};
 use util::require;
 
@@ -51,6 +51,11 @@ sol! {
         event Swap(address indexed sender, address indexed recipient, int256 amount0, int256 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick);
         event Burn(address indexed owner, int24 indexed tickLower, int24 indexed tickUpper, uint128 amount, uint256 amount0, uint256 amount1);
         event Mint(address sender, address indexed owner, int24 indexed tickLower, int24 indexed tickUpper, uint128 amount, uint256 amount0, uint256 amount1);
+        event Collect(address indexed owner, address recipient, int24 indexed tickLower, int24 indexed tickUpper, uint128 amount0, uint128 amount1);
+        event Flash( address indexed sender, address indexed recipient, uint256 amount0, uint256 amount1, uint256 paid0, uint256 paid1 );
+        event IncreaseObservationCardinalityNext( uint16 observationCardinalityNextOld, uint16 observationCardinalityNextNew );
+        event SetFeeProtocol(uint8 feeProtocol0Old, uint8 feeProtocol1Old, uint8 feeProtocol0New, uint8 feeProtocol1New);
+        event CollectProtocol(address indexed sender, address indexed recipient, uint128 amount0, uint128 amount1);
         function token0() external view returns (address);
         function token1() external view returns (address);
         function liquidity() external view returns (uint128);
@@ -159,6 +164,8 @@ impl AutomatedMarketMaker for UniswapV3Pool {
             self.sync_from_mint_log(log)?;
         } else if event_signature == IUniswapV3Pool::Swap::SIGNATURE_HASH {
             self.sync_from_swap_log(log)?;
+        } else if event_signature == IUniswapV3Pool::Flash::SIGNATURE_HASH {
+            self.sync_from_flash_log(log)?;
         } else {
             Err(EventLogError::InvalidEventSignature)?
         }
@@ -680,6 +687,53 @@ impl UniswapV3Pool {
         };
 
         Ok((amount0, amount1))
+    }
+
+    // Only for tracking state with logs
+    pub fn flash(
+        &mut self,
+        _recipient: Address,
+        _amount0: U256,
+        _amount1: U256,
+        paid0: U256,
+        paid1: U256,
+    ) -> Result<(), AMMError> {
+        let liquidity = self.liquidity;
+        require(liquidity > 0, "L")?;
+
+        if paid0 > U256::ZERO {
+            let fee_protocol0 = self.slot0.fee_protocol % 16;
+            let fees0 = if fee_protocol0 == 0 {
+                U256::ZERO
+            } else {
+                paid0 / U256::from(fee_protocol0)
+            };
+
+            if fees0 > U256::ZERO {
+                self.protocol_fees.token0 += u128::try_from(fees0).unwrap();
+            }
+
+            self.fee_growth_global_0_x128 +=
+                mul_div(paid0 - fees0, U256::ONE << 128, U256::from(liquidity))?;
+        }
+
+        if paid1 > U256::ZERO {
+            let fee_protocol1 = self.slot0.fee_protocol >> 4;
+            let fees1 = if fee_protocol1 == 0 {
+                U256::ZERO
+            } else {
+                paid1 / U256::from(fee_protocol1)
+            };
+
+            if fees1 > U256::ZERO {
+                self.protocol_fees.token1 += u128::try_from(fees1).unwrap();
+            }
+
+            self.fee_growth_global_1_x128 +=
+                mul_div(paid1 - fees1, U256::ONE << 128, U256::from(liquidity))?;
+        }
+
+        Ok(())
     }
 
     /// Returns the swap fee of the pool.
@@ -1451,6 +1505,22 @@ impl UniswapV3Pool {
         assert_eq!(self.slot0.tick, swap_event.tick.as_i32());
 
         tracing::debug!(?swap_event, address = ?self.address, sqrt_price = ?self.slot0.sqrt_price_x96, liquidity = ?self.liquidity, tick = ?self.slot0.tick, "UniswapV3 swap event");
+
+        Ok(())
+    }
+
+    pub fn sync_from_flash_log(&mut self, log: Log) -> Result<(), alloy::sol_types::Error> {
+        let flash_event = IUniswapV3Pool::Flash::decode_log(log.as_ref())?;
+
+        self.flash(
+            flash_event.recipient,
+            flash_event.amount0,
+            flash_event.amount1,
+            flash_event.paid0,
+            flash_event.paid1,
+        )
+        .map_err(|e| alloy::sol_types::Error::custom(e.to_string()))?;
+        tracing::debug!(?flash_event, address = ?self.address, sqrt_price = ?self.slot0.sqrt_price_x96, liquidity = ?self.liquidity, tick = ?self.slot0.tick, "UniswapV3 flash event");
 
         Ok(())
     }
