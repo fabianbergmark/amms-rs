@@ -32,7 +32,7 @@ use position::Position;
 use serde::{Deserialize, Serialize};
 use tick::Tick;
 use tracing::instrument;
-use uniswap_v3_math::full_math::{mul_div, mul_div_rounding_up};
+use uniswap_v3_math::full_math::mul_div;
 use uniswap_v3_math::tick_math::{MAX_SQRT_RATIO, MAX_TICK, MIN_SQRT_RATIO, MIN_TICK};
 use util::require;
 
