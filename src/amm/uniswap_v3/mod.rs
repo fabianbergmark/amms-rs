@@ -149,6 +149,11 @@ impl AutomatedMarketMaker for UniswapV3Pool {
             IUniswapV3Pool::Swap::SIGNATURE_HASH,
             IUniswapV3Pool::Mint::SIGNATURE_HASH,
             IUniswapV3Pool::Burn::SIGNATURE_HASH,
+            IUniswapV3Pool::Collect::SIGNATURE_HASH,
+            IUniswapV3Pool::CollectProtocol::SIGNATURE_HASH,
+            IUniswapV3Pool::Flash::SIGNATURE_HASH,
+            IUniswapV3Pool::IncreaseObservationCardinalityNext::SIGNATURE_HASH,
+            IUniswapV3Pool::SetFeeProtocol::SIGNATURE_HASH,
         ]
     }
 
@@ -166,6 +171,16 @@ impl AutomatedMarketMaker for UniswapV3Pool {
             self.sync_from_swap_log(log)?;
         } else if event_signature == IUniswapV3Pool::Flash::SIGNATURE_HASH {
             self.sync_from_flash_log(log)?;
+        } else if event_signature == IUniswapV3Pool::Collect::SIGNATURE_HASH {
+            self.sync_from_collect_log(log)?;
+        } else if event_signature == IUniswapV3Pool::CollectProtocol::SIGNATURE_HASH {
+            self.sync_from_collect_protocol_log(log)?;
+        } else if event_signature == IUniswapV3Pool::SetFeeProtocol::SIGNATURE_HASH {
+            self.sync_from_set_fee_protocol_log(log)?;
+        } else if event_signature
+            == IUniswapV3Pool::IncreaseObservationCardinalityNext::SIGNATURE_HASH
+        {
+            self.sync_from_increase_observation_cardinality_next_log(log)?;
         } else {
             Err(EventLogError::InvalidEventSignature)?
         }
@@ -886,10 +901,10 @@ impl UniswapV3Pool {
     }
 
     pub fn sync_from_initialize_log(&mut self, log: Log) -> Result<(), alloy::dyn_abi::Error> {
-        let initialize_event = IUniswapV3Pool::Initialize::decode_log(log.as_ref())?;
+        let event = IUniswapV3Pool::Initialize::decode_log(log.as_ref())?;
 
-        self.slot0.sqrt_price_x96 = initialize_event.sqrtPriceX96.to();
-        self.slot0.tick = initialize_event.tick.as_i32();
+        self.slot0.sqrt_price_x96 = event.sqrtPriceX96.to();
+        self.slot0.tick = event.tick.as_i32();
         self.observations
             .initialize(log.block_timestamp.unwrap() as u32);
 
@@ -898,36 +913,36 @@ impl UniswapV3Pool {
 
     /// Updates the pool state from a burn event log.
     pub fn sync_from_burn_log(&mut self, log: Log) -> Result<(), alloy::dyn_abi::Error> {
-        let burn_event = IUniswapV3Pool::Burn::decode_log(log.as_ref())?;
+        let event = IUniswapV3Pool::Burn::decode_log(log.as_ref())?;
 
         if let Err(e) = self.burn(
-            burn_event.owner,
-            i32::try_from(burn_event.tickLower).unwrap(),
-            i32::try_from(burn_event.tickUpper).unwrap(),
-            burn_event.amount,
+            event.owner,
+            i32::try_from(event.tickLower).unwrap(),
+            i32::try_from(event.tickUpper).unwrap(),
+            event.amount,
             log.block_timestamp.unwrap(),
         ) {
             tracing::warn!(?e);
         }
-        tracing::debug!(?burn_event, address = ?self.address, sqrt_price = ?self.slot0.sqrt_price_x96, liquidity = ?self.liquidity, tick = ?self.slot0.tick, "UniswapV3 burn event");
+        tracing::debug!(?event, address = ?self.address, sqrt_price = ?self.slot0.sqrt_price_x96, liquidity = ?self.liquidity, tick = ?self.slot0.tick, "UniswapV3 burn event");
         Ok(())
     }
 
     /// Updates the pool state from a mint event log.
     pub fn sync_from_mint_log(&mut self, log: Log) -> Result<(), alloy::dyn_abi::Error> {
-        let mint_event = IUniswapV3Pool::Mint::decode_log(log.as_ref())?;
+        let event = IUniswapV3Pool::Mint::decode_log(log.as_ref())?;
 
         if let Err(e) = self.mint(
-            mint_event.owner,
-            i32::try_from(mint_event.tickLower).unwrap(),
-            i32::try_from(mint_event.tickUpper).unwrap(),
-            mint_event.amount,
+            event.owner,
+            i32::try_from(event.tickLower).unwrap(),
+            i32::try_from(event.tickUpper).unwrap(),
+            event.amount,
             log.block_timestamp.unwrap(),
         ) {
             tracing::warn!(?e);
         }
 
-        tracing::debug!(?mint_event, address = ?self.address, sqrt_price = ?self.slot0.sqrt_price_x96, liquidity = ?self.liquidity, tick = ?self.slot0.tick, "UniswapV3 mint event");
+        tracing::debug!(?event, address = ?self.address, sqrt_price = ?self.slot0.sqrt_price_x96, liquidity = ?self.liquidity, tick = ?self.slot0.tick, "UniswapV3 mint event");
 
         Ok(())
     }
@@ -1482,45 +1497,96 @@ impl UniswapV3Pool {
 
     /// Updates the pool state from a swap event log.
     pub fn sync_from_swap_log(&mut self, log: Log) -> Result<(), alloy::sol_types::Error> {
-        let swap_event = IUniswapV3Pool::Swap::decode_log(log.as_ref())?;
+        let event = IUniswapV3Pool::Swap::decode_log(log.as_ref())?;
 
-        let zero_for_one = swap_event.amount1 < I256::ZERO;
+        let zero_for_one = event.amount1 < I256::ZERO;
         let amount_specified = if zero_for_one {
-            swap_event.amount1
+            event.amount1
         } else {
-            swap_event.amount0
+            event.amount0
         };
 
         self.swap(
-            swap_event.recipient,
+            event.recipient,
             zero_for_one,
             amount_specified,
-            U256::from(swap_event.sqrtPriceX96),
+            U256::from(event.sqrtPriceX96),
             log.block_timestamp.unwrap(),
         )
         .map_err(|e| alloy::sol_types::Error::custom(e.to_string()))?;
 
-        assert_eq!(self.slot0.sqrt_price_x96, swap_event.sqrtPriceX96.to());
-        assert_eq!(self.liquidity, swap_event.liquidity);
-        assert_eq!(self.slot0.tick, swap_event.tick.as_i32());
+        assert_eq!(self.slot0.sqrt_price_x96, event.sqrtPriceX96.to());
+        assert_eq!(self.liquidity, event.liquidity);
+        assert_eq!(self.slot0.tick, event.tick.as_i32());
 
-        tracing::debug!(?swap_event, address = ?self.address, sqrt_price = ?self.slot0.sqrt_price_x96, liquidity = ?self.liquidity, tick = ?self.slot0.tick, "UniswapV3 swap event");
+        tracing::debug!(?event, address = ?self.address, sqrt_price = ?self.slot0.sqrt_price_x96, liquidity = ?self.liquidity, tick = ?self.slot0.tick, "UniswapV3 swap event");
 
         Ok(())
     }
 
     pub fn sync_from_flash_log(&mut self, log: Log) -> Result<(), alloy::sol_types::Error> {
-        let flash_event = IUniswapV3Pool::Flash::decode_log(log.as_ref())?;
+        let event = IUniswapV3Pool::Flash::decode_log(log.as_ref())?;
 
         self.flash(
-            flash_event.recipient,
-            flash_event.amount0,
-            flash_event.amount1,
-            flash_event.paid0,
-            flash_event.paid1,
+            event.recipient,
+            event.amount0,
+            event.amount1,
+            event.paid0,
+            event.paid1,
         )
         .map_err(|e| alloy::sol_types::Error::custom(e.to_string()))?;
-        tracing::debug!(?flash_event, address = ?self.address, sqrt_price = ?self.slot0.sqrt_price_x96, liquidity = ?self.liquidity, tick = ?self.slot0.tick, "UniswapV3 flash event");
+        tracing::debug!(?event, address = ?self.address, sqrt_price = ?self.slot0.sqrt_price_x96, liquidity = ?self.liquidity, tick = ?self.slot0.tick, "UniswapV3 flash event");
+
+        Ok(())
+    }
+    pub fn sync_from_collect_log(&mut self, log: Log) -> Result<(), alloy::sol_types::Error> {
+        let event = IUniswapV3Pool::Collect::decode_log(log.as_ref())?;
+
+        self.collect(
+            event.recipient,
+            event.tickLower.as_i32(),
+            event.tickUpper.as_i32(),
+            event.amount0,
+            event.amount1,
+        );
+        tracing::debug!(?event, address = ?self.address, sqrt_price = ?self.slot0.sqrt_price_x96, liquidity = ?self.liquidity, tick = ?self.slot0.tick, "UniswapV3 collect event");
+
+        Ok(())
+    }
+
+    pub fn sync_from_collect_protocol_log(
+        &mut self,
+        log: Log,
+    ) -> Result<(), alloy::sol_types::Error> {
+        let event = IUniswapV3Pool::CollectProtocol::decode_log(log.as_ref())?;
+
+        self.protocol_fees.token0 -= event.amount0;
+        self.protocol_fees.token1 -= event.amount1;
+        tracing::debug!(?event, address = ?self.address, sqrt_price = ?self.slot0.sqrt_price_x96, liquidity = ?self.liquidity, tick = ?self.slot0.tick, "UniswapV3 CollectProtocol event");
+
+        Ok(())
+    }
+
+    pub fn sync_from_set_fee_protocol_log(
+        &mut self,
+        log: Log,
+    ) -> Result<(), alloy::sol_types::Error> {
+        let event = IUniswapV3Pool::SetFeeProtocol::decode_log(log.as_ref())?;
+
+        self.slot0.fee_protocol = event.feeProtocol0New + (event.feeProtocol1New << 4);
+        tracing::debug!(?event, address = ?self.address, sqrt_price = ?self.slot0.sqrt_price_x96, liquidity = ?self.liquidity, tick = ?self.slot0.tick, "UniswapV3 SetFeeProtocol event");
+
+        Ok(())
+    }
+
+    pub fn sync_from_increase_observation_cardinality_next_log(
+        &mut self,
+        log: Log,
+    ) -> Result<(), alloy::sol_types::Error> {
+        let event = IUniswapV3Pool::IncreaseObservationCardinalityNext::decode_log(log.as_ref())?;
+
+        self.slot0.observation_cardinality_next = event.observationCardinalityNextNew;
+        tracing::debug!(?event, address = ?self.address, sqrt_price = ?self.slot0.sqrt_price_x96, liquidity = ?self.liquidity, tick = ?self.slot0.tick, "UniswapV3 IncreaseObservationCardinalityNext event");
 
         Ok(())
     }
