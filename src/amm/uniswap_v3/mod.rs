@@ -162,33 +162,24 @@ impl AutomatedMarketMaker for UniswapV3Pool {
         let event_signature = log.topics()[0];
 
         if event_signature == *IUniswapV3Pool::Initialize::SIGNATURE_HASH {
-            println!("sync_from_log: initialize");
             self.sync_from_initialize_log(log)?;
         } else if event_signature == IUniswapV3Pool::Burn::SIGNATURE_HASH {
-            println!("sync_from_log: burn");
             self.sync_from_burn_log(log)?;
         } else if event_signature == IUniswapV3Pool::Mint::SIGNATURE_HASH {
-            println!("sync_from_log: mint");
             self.sync_from_mint_log(log)?;
         } else if event_signature == IUniswapV3Pool::Swap::SIGNATURE_HASH {
-            println!("sync_from_log: swap");
             self.sync_from_swap_log(log)?;
         } else if event_signature == IUniswapV3Pool::Flash::SIGNATURE_HASH {
-            println!("sync_from_log: flash");
             self.sync_from_flash_log(log)?;
         } else if event_signature == IUniswapV3Pool::Collect::SIGNATURE_HASH {
-            println!("sync_from_log: collect");
             self.sync_from_collect_log(log)?;
         } else if event_signature == IUniswapV3Pool::CollectProtocol::SIGNATURE_HASH {
-            println!("sync_from_log: collect protocol");
             self.sync_from_collect_protocol_log(log)?;
         } else if event_signature == IUniswapV3Pool::SetFeeProtocol::SIGNATURE_HASH {
-            println!("sync_from_log: set fee protocol");
             self.sync_from_set_fee_protocol_log(log)?;
         } else if event_signature
             == IUniswapV3Pool::IncreaseObservationCardinalityNext::SIGNATURE_HASH
         {
-            println!("sync_from_log: increase observation cardinality next");
             self.sync_from_increase_observation_cardinality_next_log(log)?;
         } else {
             Err(EventLogError::InvalidEventSignature)?
@@ -579,8 +570,6 @@ impl UniswapV3Pool {
                 state.amount_specified_remaining,
                 self.fee,
             )?;
-            println!("feebefore: {}", step.fee_amount);
-            println!("feeeee: {}", self.fee);
 
             if exact_input {
                 state.amount_specified_remaining -=
@@ -601,10 +590,6 @@ impl UniswapV3Pool {
 
             // update global fee tracker
             if state.liquidity > 0 {
-                println!(
-                    "fee: {}, state.feegrowth {}",
-                    step.fee_amount, state.fee_growth_global_x128
-                );
                 state.fee_growth_global_x128 += mul_div(
                     step.fee_amount,
                     U256::ONE << 128,
@@ -706,7 +691,6 @@ impl UniswapV3Pool {
                 self.protocol_fees.token0 += state.protocol_fee;
             }
         } else {
-            println!("setting global1 to {}", state.fee_growth_global_x128);
             self.fee_growth_global_1_x128 = state.fee_growth_global_x128;
             if state.protocol_fee > 0 {
                 self.protocol_fees.token1 += state.protocol_fee;
@@ -1357,7 +1341,6 @@ impl UniswapV3Pool {
             return self.fee_growth_global_0_x128;
         }
         if slot == U256::from(2) {
-            println!("hmm: {}", self.fee_growth_global_0_x128);
             return self.fee_growth_global_1_x128;
         }
         if slot == U256::from(4) {
