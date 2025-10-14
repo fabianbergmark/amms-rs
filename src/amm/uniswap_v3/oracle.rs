@@ -1,4 +1,7 @@
-use alloy::primitives::U256;
+use alloy::{
+    primitives::{aliases::I56, U160, U256},
+    sol_types::SolValue,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize)]
@@ -14,7 +17,7 @@ pub struct Observations(Vec<Observation>);
 
 impl Default for Observations {
     fn default() -> Self {
-        Self(vec![Default::default(); 65535])
+        Self(vec![Default::default(); 1])
     }
 }
 
@@ -26,6 +29,27 @@ impl Default for Observations {
 /// Observations are overwritten when the full length of the oracle array is populated.
 /// The most recent observation is available, independent of the length of the oracle array, by passing 0 to observe()
 impl Observations {
+    pub fn read_raw(&self, index: U256) -> Option<U256> {
+        if (index < U256::from(8 + 65535)) && index >= U256::from(8) {
+            let index: usize = index.to();
+            let Some(value) = self.0.get(index - 8) else {
+                return Some(U256::ZERO);
+            };
+
+            let data = (
+                value.initialized,
+                U160::from(value.seconds_per_liquidity_cumulative_x128),
+                I56::try_from(value.tick_cumulative).unwrap(),
+                value.block_timestamp,
+            )
+                .abi_encode_packed();
+
+            Some(U256::from_be_slice(&data))
+        } else {
+            None
+        }
+    }
+
     /// @notice Transforms a previous observation into a new observation, given the passage of time and the current tick and liquidity values
     /// @dev blockTimestamp _must_ be chronologically equal to or greater than last.blockTimestamp, safe for 0 or 1 overflows
     /// @param last The specified observation to be transformed
@@ -127,6 +151,8 @@ impl Observations {
         if next <= current {
             return current;
         }
+
+        self.0.resize(next as usize, Default::default());
 
         for i in current..next {
             self.0[i as usize].block_timestamp = 1;

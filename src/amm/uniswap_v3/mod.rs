@@ -11,7 +11,6 @@ use std::u128;
 use std::{cmp::Ordering, collections::BTreeMap, sync::Arc};
 
 use alloy::primitives::aliases::I24;
-use alloy::primitives::map::HashMap;
 use alloy::primitives::ruint::UintTryFrom;
 use alloy::primitives::{U128, U512};
 use alloy::{
@@ -28,11 +27,12 @@ use futures::{stream::FuturesOrdered, StreamExt};
 use liquidity_math::add_delta;
 use num_bigfloat::BigFloat;
 use oracle::Observations;
-use position::Position;
+use position::{Position, Positions};
 use serde::{Deserialize, Serialize};
-use tick::Tick;
+use tick::{Tick, Ticks};
 use tracing::instrument;
 use uniswap_v3_math::full_math::mul_div;
+use uniswap_v3_math::tick_bitmap::TickBitmap;
 use uniswap_v3_math::tick_math::{MAX_SQRT_RATIO, MAX_TICK, MIN_SQRT_RATIO, MIN_TICK};
 use util::require;
 
@@ -81,10 +81,10 @@ pub struct UniswapV3Pool {
     pub liquidity: u128,
     pub fee: u32,
     pub tick_spacing: i32,
-    pub tick_bitmap: HashMap<i16, U256>,
-    pub ticks: HashMap<i32, Tick>,
+    pub tick_bitmap: TickBitmap,
+    pub ticks: Ticks,
     #[serde(skip)]
-    pub positions: HashMap<(Address, i32, i32), Position>,
+    pub positions: Positions,
     pub fee_growth_global_0_x128: U256,
     pub fee_growth_global_1_x128: U256,
     pub max_liquidity_per_tick: u128,
@@ -162,24 +162,33 @@ impl AutomatedMarketMaker for UniswapV3Pool {
         let event_signature = log.topics()[0];
 
         if event_signature == *IUniswapV3Pool::Initialize::SIGNATURE_HASH {
+            println!("sync_from_log: initialize");
             self.sync_from_initialize_log(log)?;
         } else if event_signature == IUniswapV3Pool::Burn::SIGNATURE_HASH {
+            println!("sync_from_log: burn");
             self.sync_from_burn_log(log)?;
         } else if event_signature == IUniswapV3Pool::Mint::SIGNATURE_HASH {
+            println!("sync_from_log: mint");
             self.sync_from_mint_log(log)?;
         } else if event_signature == IUniswapV3Pool::Swap::SIGNATURE_HASH {
+            println!("sync_from_log: swap");
             self.sync_from_swap_log(log)?;
         } else if event_signature == IUniswapV3Pool::Flash::SIGNATURE_HASH {
+            println!("sync_from_log: flash");
             self.sync_from_flash_log(log)?;
         } else if event_signature == IUniswapV3Pool::Collect::SIGNATURE_HASH {
+            println!("sync_from_log: collect");
             self.sync_from_collect_log(log)?;
         } else if event_signature == IUniswapV3Pool::CollectProtocol::SIGNATURE_HASH {
+            println!("sync_from_log: collect protocol");
             self.sync_from_collect_protocol_log(log)?;
         } else if event_signature == IUniswapV3Pool::SetFeeProtocol::SIGNATURE_HASH {
+            println!("sync_from_log: set fee protocol");
             self.sync_from_set_fee_protocol_log(log)?;
         } else if event_signature
             == IUniswapV3Pool::IncreaseObservationCardinalityNext::SIGNATURE_HASH
         {
+            println!("sync_from_log: increase observation cardinality next");
             self.sync_from_increase_observation_cardinality_next_log(log)?;
         } else {
             Err(EventLogError::InvalidEventSignature)?
@@ -280,8 +289,6 @@ impl UniswapV3Pool {
         sqrt_price_x96: U256,
         tick: i32,
         tick_spacing: i32,
-        tick_bitmap: HashMap<i16, U256>,
-        ticks: HashMap<i32, Tick>,
     ) -> UniswapV3Pool {
         let min_tick = (MIN_TICK / tick_spacing) * tick_spacing;
         let max_tick = (MAX_TICK / tick_spacing) * tick_spacing;
@@ -296,8 +303,6 @@ impl UniswapV3Pool {
             fee,
             liquidity,
             tick_spacing,
-            tick_bitmap,
-            ticks,
             max_liquidity_per_tick,
             slot0: Slot0 {
                 sqrt_price_x96,
@@ -327,6 +332,13 @@ impl UniswapV3Pool {
 
         // We need to get tick spacing before populating tick data because tick spacing can not be uninitialized when syncing burn and mint logs
         pool.tick_spacing = pool.get_tick_spacing(provider.clone()).await?;
+        pool.fee = pool.get_fee(provider.clone()).await?;
+
+        let min_tick = (MIN_TICK / pool.tick_spacing) * pool.tick_spacing;
+        let max_tick = (MAX_TICK / pool.tick_spacing) * pool.tick_spacing;
+        let num_ticks = ((max_tick - min_tick) / pool.tick_spacing) + 1;
+        let max_liquidity_per_tick = u128::MAX / num_ticks as u128;
+        pool.max_liquidity_per_tick = max_liquidity_per_tick;
 
         let synced_block = pool
             .populate_tick_data(creation_block, provider.clone())
@@ -425,6 +437,12 @@ impl UniswapV3Pool {
                                 IUniswapV3Pool::Initialize::SIGNATURE_HASH,
                                 IUniswapV3Pool::Burn::SIGNATURE_HASH,
                                 IUniswapV3Pool::Mint::SIGNATURE_HASH,
+                                IUniswapV3Pool::Flash::SIGNATURE_HASH,
+                                IUniswapV3Pool::Collect::SIGNATURE_HASH,
+                                IUniswapV3Pool::CollectProtocol::SIGNATURE_HASH,
+                                IUniswapV3Pool::IncreaseObservationCardinalityNext::SIGNATURE_HASH,
+                                IUniswapV3Pool::Swap::SIGNATURE_HASH,
+                                IUniswapV3Pool::SetFeeProtocol::SIGNATURE_HASH,
                             ])
                             .address(pool_address)
                             .from_block(from_block)
@@ -525,8 +543,7 @@ impl UniswapV3Pool {
 
             //Get the next tick from the current tick
             (step.tick_next, step.initialized) =
-                uniswap_v3_math::tick_bitmap::next_initialized_tick_within_one_word(
-                    &self.tick_bitmap,
+                self.tick_bitmap.next_initialized_tick_within_one_word(
                     state.tick,
                     self.tick_spacing,
                     zero_for_one,
@@ -562,6 +579,8 @@ impl UniswapV3Pool {
                 state.amount_specified_remaining,
                 self.fee,
             )?;
+            println!("feebefore: {}", step.fee_amount);
+            println!("feeeee: {}", self.fee);
 
             if exact_input {
                 state.amount_specified_remaining -=
@@ -582,6 +601,10 @@ impl UniswapV3Pool {
 
             // update global fee tracker
             if state.liquidity > 0 {
+                println!(
+                    "fee: {}, state.feegrowth {}",
+                    step.fee_amount, state.fee_growth_global_x128
+                );
                 state.fee_growth_global_x128 += mul_div(
                     step.fee_amount,
                     U256::ONE << 128,
@@ -683,6 +706,7 @@ impl UniswapV3Pool {
                 self.protocol_fees.token0 += state.protocol_fee;
             }
         } else {
+            println!("setting global1 to {}", state.fee_growth_global_x128);
             self.fee_growth_global_1_x128 = state.fee_growth_global_x128;
             if state.protocol_fee > 0 {
                 self.protocol_fees.token1 += state.protocol_fee;
@@ -905,8 +929,12 @@ impl UniswapV3Pool {
 
         self.slot0.sqrt_price_x96 = event.sqrtPriceX96.to();
         self.slot0.tick = event.tick.as_i32();
-        self.observations
+        let (cardinality, cardinality_next) = self
+            .observations
             .initialize(log.block_timestamp.unwrap() as u32);
+        self.slot0.observation_cardinality = cardinality;
+        self.slot0.observation_cardinality_next = cardinality_next;
+        self.slot0.unlocked = true;
 
         Ok(())
     }
@@ -1321,6 +1349,35 @@ impl UniswapV3Pool {
         Ok(())
     }
 
+    pub fn read_raw(&self, slot: U256) -> U256 {
+        if slot == U256::ZERO {
+            return self.slot0.into();
+        }
+        if slot == U256::from(1) {
+            return self.fee_growth_global_0_x128;
+        }
+        if slot == U256::from(2) {
+            println!("hmm: {}", self.fee_growth_global_0_x128);
+            return self.fee_growth_global_1_x128;
+        }
+        if slot == U256::from(4) {
+            return U256::from(self.liquidity);
+        }
+        if let Some(value) = self.positions.read_raw(slot) {
+            return value;
+        }
+        if let Some(value) = self.ticks.read_raw(slot) {
+            return value;
+        }
+        if let Some(value) = self.observations.read_raw(slot) {
+            return value;
+        }
+        if let Some(value) = self.tick_bitmap.read_raw(slot) {
+            return value;
+        }
+        U256::ZERO
+    }
+
     pub fn modify_position(
         &mut self,
         params: ModifyPositionParams,
@@ -1449,10 +1506,10 @@ impl UniswapV3Pool {
                 self.max_liquidity_per_tick,
             )?;
             if flipped_lower {
-                Self::flip_tick(&mut self.tick_bitmap, tick_lower, self.tick_spacing)?;
+                self.tick_bitmap.flip_tick(tick_lower, self.tick_spacing)?;
             }
             if flipped_upper {
-                Self::flip_tick(&mut self.tick_bitmap, tick_upper, self.tick_spacing)?;
+                self.tick_bitmap.flip_tick(tick_upper, self.tick_spacing)?;
             }
         }
 
@@ -1481,18 +1538,6 @@ impl UniswapV3Pool {
         }
 
         Ok(*position)
-    }
-
-    pub fn flip_tick(
-        tick_bitmap: &mut HashMap<i16, U256>,
-        tick: i32,
-        tick_spacing: i32,
-    ) -> Result<(), AMMError> {
-        require(tick % tick_spacing == 0, "")?;
-        let (word_pos, bit_pos) = uniswap_v3_math::tick_bitmap::position(tick / tick_spacing);
-        let mask = ONE << bit_pos;
-        *tick_bitmap.entry(word_pos).or_default() ^= mask;
-        Ok(())
     }
 
     /// Updates the pool state from a swap event log.
@@ -1734,6 +1779,21 @@ pub struct Slot0 {
     observation_cardinality_next: u16,
     fee_protocol: u8,
     unlocked: bool,
+}
+
+impl Into<U256> for Slot0 {
+    fn into(self) -> U256 {
+        let mut data = self.sqrt_price_x96;
+        let tick: U256 = I24::unchecked_from(self.tick).into_raw().to();
+        data |= tick << 160;
+        let mut obs = self.observation_index as u64;
+        obs |= (self.observation_cardinality as u64) << 16;
+        obs |= (self.observation_cardinality_next as u64) << 32;
+        obs |= (self.fee_protocol as u64) << 48;
+        obs |= (self.unlocked as u64) << 56;
+        data |= U256::from(obs) << 184;
+        data
+    }
 }
 
 pub struct SwapCache {

@@ -1,9 +1,66 @@
-use alloy::primitives::{map::HashMap, U256};
+use std::collections::hash_map::Entry;
+
+use alloy::{
+    primitives::{
+        aliases::{I24, I56},
+        keccak256,
+        map::HashMap,
+        U160, U256,
+    },
+    sol_types::SolValue,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::errors::AMMError;
 
 use super::{liquidity_math, util::require};
+#[derive(Debug, Deserialize, Serialize, Default, Clone)]
+pub struct Ticks {
+    pub ticks: HashMap<U256, Tick>,
+}
+
+impl Ticks {
+    pub fn entry(&mut self, key: i32) -> Entry<'_, U256, Tick> {
+        let slot = keccak256((I24::try_from(key).unwrap(), U256::from(5)).abi_encode());
+        let slot: U256 = slot.into();
+        self.ticks.entry(slot)
+    }
+
+    pub fn get(&self, key: &i32) -> Option<&Tick> {
+        let slot = keccak256((I24::try_from(*key).unwrap(), U256::from(5)).abi_encode());
+        let slot: U256 = slot.into();
+        self.ticks.get(&slot)
+    }
+
+    pub fn remove(&mut self, key: &i32) -> Option<Tick> {
+        let slot = keccak256((I24::try_from(*key).unwrap(), U256::from(5)).abi_encode());
+        let slot: U256 = slot.into();
+        self.ticks.remove(&slot)
+    }
+    pub fn read_raw(&self, slot: U256) -> Option<U256> {
+        for i in 0..4 {
+            let offset = U256::from(i);
+
+            if let Some(tick) = self.ticks.get(&(slot - offset)) {
+                let bytes = match i {
+                    0 => (tick.liquidity_net, tick.liquidity_gross).abi_encode_packed(),
+                    1 => tick.fee_growth_outside_0_x128.abi_encode_packed(),
+                    2 => tick.fee_growth_outside_1_x128.abi_encode_packed(),
+                    3 => (
+                        tick.initialized,
+                        tick.seconds_outside,
+                        U160::from(tick.seconds_per_liquidity_outside_x128),
+                        I56::try_from(tick.tick_cumulative_outside).unwrap(),
+                    )
+                        .abi_encode_packed(),
+                    _ => unreachable!("i < 4"),
+                };
+                return Some(U256::from_be_slice(&bytes));
+            }
+        }
+        None
+    }
+}
 
 #[derive(Debug, Deserialize, Serialize, Default, Clone, Copy)]
 pub struct Tick {
@@ -19,7 +76,7 @@ pub struct Tick {
 
 impl Tick {
     pub fn get_fee_growth_inside(
-        ticks: &HashMap<i32, Tick>,
+        ticks: &Ticks,
         tick_lower: i32,
         tick_upper: i32,
         tick_current: i32,
@@ -62,7 +119,7 @@ impl Tick {
     }
 
     pub fn update(
-        ticks: &mut HashMap<i32, Tick>,
+        ticks: &mut Ticks,
         tick: i32,
         tick_current: i32,
         liquidity_delta: i128,
@@ -108,7 +165,7 @@ impl Tick {
     }
 
     pub(crate) fn cross(
-        ticks: &mut HashMap<i32, Tick>,
+        ticks: &mut Ticks,
         tick: i32,
         fee_growth_global_0_x128: U256,
         fee_growth_global_1_x128: U256,
