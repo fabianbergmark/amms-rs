@@ -356,10 +356,33 @@ impl UniswapV3Pool {
 
         if event_signature == IUniswapV3Factory::PoolCreated::SIGNATURE_HASH {
             if let Some(block_number) = log.block_number {
-                let pool_created_event = IUniswapV3Factory::PoolCreated::decode_log(&log.inner)?;
+                let event = IUniswapV3Factory::PoolCreated::decode_log(&log.inner)?;
 
-                UniswapV3Pool::new_from_address(pool_created_event.pool, block_number, provider)
-                    .await
+                let mut pool = UniswapV3Pool {
+                    address: event.address,
+                    tick_spacing: event.tickSpacing.as_i32(),
+                    fee: event.fee.to(),
+                    ..Default::default()
+                };
+
+                let min_tick = (MIN_TICK / pool.tick_spacing) * pool.tick_spacing;
+                let max_tick = (MAX_TICK / pool.tick_spacing) * pool.tick_spacing;
+                let num_ticks = ((max_tick - min_tick) / pool.tick_spacing) + 1;
+                let max_liquidity_per_tick = u128::MAX / num_ticks as u128;
+                pool.max_liquidity_per_tick = max_liquidity_per_tick;
+
+                let synced_block = pool
+                    .populate_tick_data(block_number, provider.clone())
+                    .await?;
+
+                // TODO: break this into two threads so it can happen concurrently
+                pool.populate_data(Some(synced_block), provider).await?;
+
+                if !pool.data_is_populated() {
+                    return Err(AMMError::PoolDataError);
+                }
+
+                Ok(pool)
             } else {
                 Err(EventLogError::LogBlockNumberNotFound)?
             }
@@ -374,13 +397,20 @@ impl UniswapV3Pool {
         let event_signature = log.topics()[0];
 
         if event_signature == IUniswapV3Factory::PoolCreated::SIGNATURE_HASH {
-            let pool_created_event = IUniswapV3Factory::PoolCreated::decode_log(log.as_ref())?;
+            let event = IUniswapV3Factory::PoolCreated::decode_log(log.as_ref())?;
+
+            let min_tick = (MIN_TICK / event.tickSpacing.as_i32()) * event.tickSpacing.as_i32();
+            let max_tick = (MAX_TICK / event.tickSpacing.as_i32()) * event.tickSpacing.as_i32();
+            let num_ticks = ((max_tick - min_tick) / event.tickSpacing.as_i32()) + 1;
+            let max_liquidity_per_tick = u128::MAX / num_ticks as u128;
 
             Ok(UniswapV3Pool {
-                address: pool_created_event.pool,
-                token_a: pool_created_event.token0,
-                token_b: pool_created_event.token1,
-                fee: pool_created_event.fee.to(),
+                address: event.pool,
+                token_a: event.token0,
+                token_b: event.token1,
+                fee: event.fee.to(),
+                max_liquidity_per_tick,
+                tick_spacing: event.tickSpacing.as_i32(),
                 ..Default::default()
             })
         } else {
