@@ -83,7 +83,6 @@ pub struct UniswapV3Pool {
     pub tick_spacing: i32,
     pub tick_bitmap: TickBitmap,
     pub ticks: Ticks,
-    #[serde(skip)]
     pub positions: Positions,
     pub fee_growth_global_0_x128: U256,
     pub fee_growth_global_1_x128: U256,

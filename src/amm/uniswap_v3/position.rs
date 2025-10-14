@@ -4,13 +4,14 @@ use alloy::{
     primitives::{aliases::I24, keccak256, map::HashMap, Address, U256},
     sol_types::SolValue,
 };
+use serde::{Deserialize, Serialize};
 use uniswap_v3_math::full_math;
 
 use crate::errors::AMMError;
 
 use super::{liquidity_math, util::require};
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct Positions {
     pub positions: HashMap<U256, Position>,
 }
@@ -48,7 +49,7 @@ impl Positions {
     }
 }
 
-#[derive(Debug, Clone, Default, Copy)]
+#[derive(Debug, Clone, Default, Copy, Serialize, Deserialize)]
 pub struct Position {
     pub liquidity: u128,
     pub fee_growth_inside_0_last_x128: U256,
