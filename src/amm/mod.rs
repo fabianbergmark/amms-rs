@@ -20,7 +20,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use self::{erc_4626::ERC4626Vault, uniswap_v2::UniswapV2Pool, uniswap_v3::UniswapV3Pool};
-use crate::errors::{AMMError, ArithmeticError, EventLogError, SwapSimulationError};
+use crate::errors::{AMMError, ArithmeticError, SwapSimulationError};
 
 sol! {
     /// Interface of the ERC20
@@ -53,7 +53,7 @@ pub trait AutomatedMarketMaker {
     fn calculate_price(&self, base_token: Address) -> Result<f64, ArithmeticError>;
 
     /// Updates the AMM data from a log.
-    fn sync_from_log(&mut self, log: Log) -> Result<(), EventLogError>;
+    fn sync_from_log(&mut self, log: Log) -> Result<(), AMMError>;
 
     /// Populates the AMM data via batched static calls.
     async fn populate_data<N, P>(
@@ -118,7 +118,7 @@ macro_rules! amm {
                 }
             }
 
-            fn sync_from_log(&mut self, log: Log) -> Result<(), EventLogError> {
+            fn sync_from_log(&mut self, log: Log) -> Result<(), AMMError> {
                 match self {
                     $(AMM::$pool_type(pool) => pool.sync_from_log(log),)+
                 }

@@ -27,10 +27,10 @@ use futures::{stream::FuturesOrdered, StreamExt};
 use liquidity_math::add_delta;
 use num_bigfloat::BigFloat;
 use oracle::Observations;
-use position::{Position, Positions};
+use position::{Positions};
 use serde::{Deserialize, Serialize};
 use tick::{Tick, Ticks};
-use tracing::instrument;
+use tracing::{instrument, log};
 use uniswap_v3_math::full_math::mul_div;
 use uniswap_v3_math::tick_bitmap::TickBitmap;
 use uniswap_v3_math::tick_math::{MAX_SQRT_RATIO, MAX_TICK, MIN_SQRT_RATIO, MIN_TICK};
@@ -157,7 +157,7 @@ impl AutomatedMarketMaker for UniswapV3Pool {
     }
 
     #[instrument(skip(self), level = "debug")]
-    fn sync_from_log(&mut self, log: Log) -> Result<(), EventLogError> {
+    fn sync_from_log(&mut self, log: Log) -> Result<(), AMMError> {
         let event_signature = log.topics()[0];
 
         if event_signature == *IUniswapV3Pool::Initialize::SIGNATURE_HASH {
@@ -953,34 +953,46 @@ impl UniswapV3Pool {
     }
 
     /// Updates the pool state from a burn event log.
-    pub fn sync_from_burn_log(&mut self, log: Log) -> Result<(), alloy::dyn_abi::Error> {
+    pub fn sync_from_burn_log(&mut self, log: Log) -> Result<(), AMMError> {
         let event = IUniswapV3Pool::Burn::decode_log(log.as_ref())?;
 
-        if let Err(e) = self.burn(
+        match self.burn(
             event.owner,
             i32::try_from(event.tickLower).unwrap(),
             i32::try_from(event.tickUpper).unwrap(),
             event.amount,
             log.block_timestamp.unwrap(),
         ) {
-            tracing::warn!(?e);
+            Ok((amount_0, amount_1)) => {
+                assert_eq!(amount_0, event.amount0);
+                assert_eq!(amount_1, event.amount1);
+            }
+            Err(e) => {
+                return Err(e)
+            }
         }
         tracing::debug!(?event, address = ?self.address, sqrt_price = ?self.slot0.sqrt_price_x96, liquidity = ?self.liquidity, tick = ?self.slot0.tick, "UniswapV3 burn event");
         Ok(())
     }
 
     /// Updates the pool state from a mint event log.
-    pub fn sync_from_mint_log(&mut self, log: Log) -> Result<(), alloy::dyn_abi::Error> {
+    pub fn sync_from_mint_log(&mut self, log: Log) -> Result<(), AMMError> {
         let event = IUniswapV3Pool::Mint::decode_log(log.as_ref())?;
 
-        if let Err(e) = self.mint(
+        match self.mint(
             event.owner,
             i32::try_from(event.tickLower).unwrap(),
             i32::try_from(event.tickUpper).unwrap(),
             event.amount,
             log.block_timestamp.unwrap(),
         ) {
-            tracing::warn!(?e);
+            Ok((amount_0, amount_1)) => {
+                assert_eq!(amount_0, event.amount0);
+                assert_eq!(amount_1, event.amount1);
+            }
+            Err(e) => {
+                return Err(e)
+            }
         }
 
         tracing::debug!(?event, address = ?self.address, sqrt_price = ?self.slot0.sqrt_price_x96, liquidity = ?self.liquidity, tick = ?self.slot0.tick, "UniswapV3 mint event");
@@ -1087,7 +1099,7 @@ impl UniswapV3Pool {
         block_timestamp: u64,
     ) -> Result<(U256, U256), AMMError> {
         require(amount > 0, "mint: amount must be larger than zero")?;
-        let (_, amount_0_int, amount_1_int) = self.modify_position(
+        let (amount_0_int, amount_1_int) = self.modify_position(
             ModifyPositionParams {
                 owner: recipient,
                 tick_lower,
@@ -1105,7 +1117,8 @@ impl UniswapV3Pool {
 
     pub fn collect(
         &mut self,
-        recipient: Address,
+        owner: Address,
+        _recipient: Address,
         tick_lower: i32,
         tick_upper: i32,
         amount_0_requested: u128,
@@ -1113,8 +1126,11 @@ impl UniswapV3Pool {
     ) -> (u128, u128) {
         let position = self
             .positions
-            .entry((recipient, tick_lower, tick_upper))
+            .entry((owner, tick_lower, tick_upper))
             .or_default();
+        if position.liquidity == 0 {
+            log::warn!("New position");
+        }
 
         let amount0 = if amount_0_requested > position.tokens_owed0 {
             position.tokens_owed0
@@ -1144,7 +1160,7 @@ impl UniswapV3Pool {
         amount: u128,
         block_timestamp: u64,
     ) -> Result<(U256, U256), AMMError> {
-        let (_, amount_0_int, amount_1_int) = self.modify_position(
+        let (amount_0_int, amount_1_int) = self.modify_position(
             ModifyPositionParams {
                 owner,
                 tick_lower,
@@ -1394,10 +1410,10 @@ impl UniswapV3Pool {
         &mut self,
         params: ModifyPositionParams,
         block_timestamp: u64,
-    ) -> Result<(Position, I256, I256), AMMError> {
+    ) -> Result<(I256, I256), AMMError> {
         Self::check_ticks(params.tick_lower, params.tick_upper)?;
 
-        let position = self.update_position(
+        self.update_position(
             params.owner,
             params.tick_lower,
             params.tick_upper,
@@ -1457,7 +1473,7 @@ impl UniswapV3Pool {
                 )
             }
         }
-        return Ok((position, amount0, amount1));
+        Ok((amount0, amount1))
     }
 
     pub fn update_position(
@@ -1468,11 +1484,14 @@ impl UniswapV3Pool {
         liquidity_delta: i128,
         tick: i32,
         block_timestamp: u64,
-    ) -> Result<Position, AMMError> {
+    ) -> Result<(), AMMError> {
         let position = self
             .positions
             .entry((owner, tick_lower, tick_upper))
             .or_default();
+        if position.liquidity == 0 {
+            log::warn!("New position");
+        }
 
         let fee_growth_global_0_x128 = self.fee_growth_global_0_x128;
         let fee_growth_global_1_x128 = self.fee_growth_global_1_x128;
@@ -1549,7 +1568,7 @@ impl UniswapV3Pool {
             }
         }
 
-        Ok(*position)
+        Ok(())
     }
 
     /// Updates the pool state from a swap event log.
@@ -1572,9 +1591,9 @@ impl UniswapV3Pool {
         )
         .map_err(|e| alloy::sol_types::Error::custom(e.to_string()))?;
 
-        assert_eq!(self.slot0.sqrt_price_x96, event.sqrtPriceX96.to());
         assert_eq!(self.liquidity, event.liquidity);
         assert_eq!(self.slot0.tick, event.tick.as_i32());
+        assert_eq!(self.slot0.sqrt_price_x96, event.sqrtPriceX96.to());
 
         tracing::debug!(?event, address = ?self.address, sqrt_price = ?self.slot0.sqrt_price_x96, liquidity = ?self.liquidity, tick = ?self.slot0.tick, "UniswapV3 swap event");
 
@@ -1584,14 +1603,19 @@ impl UniswapV3Pool {
     pub fn sync_from_flash_log(&mut self, log: Log) -> Result<(), alloy::sol_types::Error> {
         let event = IUniswapV3Pool::Flash::decode_log(log.as_ref())?;
 
-        self.flash(
+        match self.flash(
             event.recipient,
             event.amount0,
             event.amount1,
             event.paid0,
             event.paid1,
-        )
-        .map_err(|e| alloy::sol_types::Error::custom(e.to_string()))?;
+        ) {
+            Ok(_) => {}
+            Err(e) => {
+                return Err(alloy::sol_types::Error::custom(e.to_string()))
+            }
+        }
+
         tracing::debug!(?event, address = ?self.address, sqrt_price = ?self.slot0.sqrt_price_x96, liquidity = ?self.liquidity, tick = ?self.slot0.tick, "UniswapV3 flash event");
 
         Ok(())
@@ -1599,13 +1623,17 @@ impl UniswapV3Pool {
     pub fn sync_from_collect_log(&mut self, log: Log) -> Result<(), alloy::sol_types::Error> {
         let event = IUniswapV3Pool::Collect::decode_log(log.as_ref())?;
 
-        self.collect(
+        let (amount_0, amount_1) = self.collect(
+            event.owner,
             event.recipient,
             event.tickLower.as_i32(),
             event.tickUpper.as_i32(),
             event.amount0,
             event.amount1,
         );
+        assert_eq!(amount_0, event.amount0);
+        assert_eq!(amount_1, event.amount1);
+
         tracing::debug!(?event, address = ?self.address, sqrt_price = ?self.slot0.sqrt_price_x96, liquidity = ?self.liquidity, tick = ?self.slot0.tick, "UniswapV3 collect event");
 
         Ok(())
