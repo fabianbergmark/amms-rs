@@ -27,7 +27,7 @@ use futures::{stream::FuturesOrdered, StreamExt};
 use liquidity_math::add_delta;
 use num_bigfloat::BigFloat;
 use oracle::Observations;
-use position::{Positions};
+use position::Positions;
 use serde::{Deserialize, Serialize};
 use tick::{Tick, Ticks};
 use tracing::{instrument, log};
@@ -246,6 +246,7 @@ impl AutomatedMarketMaker for UniswapV3Pool {
             I256::from_raw(amount_in),
             limit,
             Default::default(),
+            None,
         )
         .map_err(|_| SwapSimulationError::MixedTypes)
         .map(|(amount0, amount1)| {
@@ -507,6 +508,7 @@ impl UniswapV3Pool {
         amount_specified: I256,
         sqrt_price_limit_x_96: U256,
         block_timestamp: u64,
+        amount_in_from_log: Option<I256>,
     ) -> Result<(I256, I256), AMMError> {
         require(amount_specified != I256::ZERO, "AS")?;
 
@@ -608,6 +610,19 @@ impl UniswapV3Pool {
                 state.amount_specified_remaining += I256::try_from(step.amount_out).unwrap();
                 state.amount_calculated +=
                     I256::try_from(step.amount_in + step.fee_amount).unwrap();
+            }
+
+            // Patch for determining edge case where more fee is paid
+            if let Some(amount_in) = &amount_in_from_log {
+                assert!(!exact_input);
+                if state.amount_specified_remaining.is_zero()
+                    && state.sqrt_price_x_96 == sqrt_price_limit_x_96
+                {
+                    let extra_fee = *amount_in - state.amount_calculated;
+                    state.amount_calculated += extra_fee;
+                    assert!(extra_fee >= I256::ZERO);
+                    step.fee_amount += extra_fee.into_raw();
+                }
             }
 
             // if the protocol fee is on, calculate how much is owed, decrement feeAmount, and increment protocolFee
@@ -967,9 +982,7 @@ impl UniswapV3Pool {
                 assert_eq!(amount_0, event.amount0);
                 assert_eq!(amount_1, event.amount1);
             }
-            Err(e) => {
-                return Err(e)
-            }
+            Err(e) => return Err(e),
         }
         tracing::debug!(?event, address = ?self.address, sqrt_price = ?self.slot0.sqrt_price_x96, liquidity = ?self.liquidity, tick = ?self.slot0.tick, "UniswapV3 burn event");
         Ok(())
@@ -990,9 +1003,7 @@ impl UniswapV3Pool {
                 assert_eq!(amount_0, event.amount0);
                 assert_eq!(amount_1, event.amount1);
             }
-            Err(e) => {
-                return Err(e)
-            }
+            Err(e) => return Err(e),
         }
 
         tracing::debug!(?event, address = ?self.address, sqrt_price = ?self.slot0.sqrt_price_x96, liquidity = ?self.liquidity, tick = ?self.slot0.tick, "UniswapV3 mint event");
@@ -1128,9 +1139,6 @@ impl UniswapV3Pool {
             .positions
             .entry((owner, tick_lower, tick_upper))
             .or_default();
-        if position.liquidity == 0 {
-            log::warn!("New position");
-        }
 
         let amount0 = if amount_0_requested > position.tokens_owed0 {
             position.tokens_owed0
@@ -1489,9 +1497,6 @@ impl UniswapV3Pool {
             .positions
             .entry((owner, tick_lower, tick_upper))
             .or_default();
-        if position.liquidity == 0 {
-            log::warn!("New position");
-        }
 
         let fee_growth_global_0_x128 = self.fee_growth_global_0_x128;
         let fee_growth_global_1_x128 = self.fee_growth_global_1_x128;
@@ -1576,24 +1581,37 @@ impl UniswapV3Pool {
         let event = IUniswapV3Pool::Swap::decode_log(log.as_ref())?;
 
         let zero_for_one = event.amount1 < I256::ZERO;
-        let amount_specified = if zero_for_one {
-            event.amount1
+        let (amount_specified, amount_in_from_log) = if zero_for_one {
+            (event.amount1, event.amount0)
         } else {
-            event.amount0
+            (event.amount0, event.amount1)
         };
 
-        self.swap(
-            event.recipient,
-            zero_for_one,
-            amount_specified,
-            U256::from(event.sqrtPriceX96),
-            log.block_timestamp.unwrap(),
-        )
-        .map_err(|e| alloy::sol_types::Error::custom(e.to_string()))?;
+        let (a0, a1) = self
+            .swap(
+                event.recipient,
+                zero_for_one,
+                amount_specified,
+                U256::from(event.sqrtPriceX96),
+                log.block_timestamp.unwrap(),
+                Some(amount_in_from_log),
+            )
+            .map_err(|e| alloy::sol_types::Error::custom(e.to_string()))?;
 
+        assert_eq!(a0, event.amount0);
+        assert_eq!(a1, event.amount1);
         assert_eq!(self.liquidity, event.liquidity);
-        assert_eq!(self.slot0.tick, event.tick.as_i32());
-        assert_eq!(self.slot0.sqrt_price_x96, event.sqrtPriceX96.to());
+
+        // we can not assert because of the edge case where liquidity is zero.
+        // we simply cannot know where the swap stopped, so we assert other data points
+        // are correct and trust these ones.
+        // A little sanity check
+        assert_eq!(
+            self.slot0.sqrt_price_x96 != event.sqrtPriceX96.to(),
+            self.liquidity == 0
+        );
+        self.slot0.sqrt_price_x96 = event.sqrtPriceX96.to();
+        self.slot0.tick = event.tick.as_i32();
 
         tracing::debug!(?event, address = ?self.address, sqrt_price = ?self.slot0.sqrt_price_x96, liquidity = ?self.liquidity, tick = ?self.slot0.tick, "UniswapV3 swap event");
 
@@ -1611,9 +1629,7 @@ impl UniswapV3Pool {
             event.paid1,
         ) {
             Ok(_) => {}
-            Err(e) => {
-                return Err(alloy::sol_types::Error::custom(e.to_string()))
-            }
+            Err(e) => return Err(alloy::sol_types::Error::custom(e.to_string())),
         }
 
         tracing::debug!(?event, address = ?self.address, sqrt_price = ?self.slot0.sqrt_price_x96, liquidity = ?self.liquidity, tick = ?self.slot0.tick, "UniswapV3 flash event");
@@ -1670,6 +1686,10 @@ impl UniswapV3Pool {
     ) -> Result<(), alloy::sol_types::Error> {
         let event = IUniswapV3Pool::IncreaseObservationCardinalityNext::decode_log(log.as_ref())?;
 
+        self.observations.grow(
+            event.observationCardinalityNextOld,
+            event.observationCardinalityNextNew,
+        );
         self.slot0.observation_cardinality_next = event.observationCardinalityNextNew;
         tracing::debug!(?event, address = ?self.address, sqrt_price = ?self.slot0.sqrt_price_x96, liquidity = ?self.liquidity, tick = ?self.slot0.tick, "UniswapV3 IncreaseObservationCardinalityNext event");
 
