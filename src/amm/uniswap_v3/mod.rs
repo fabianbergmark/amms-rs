@@ -30,7 +30,7 @@ use oracle::Observations;
 use position::Positions;
 use serde::{Deserialize, Serialize};
 use tick::{Tick, Ticks};
-use tracing::{instrument, log};
+use tracing::instrument;
 use uniswap_v3_math::full_math::mul_div;
 use uniswap_v3_math::tick_bitmap::TickBitmap;
 use uniswap_v3_math::tick_math::{MAX_SQRT_RATIO, MAX_TICK, MIN_SQRT_RATIO, MIN_TICK};
@@ -1580,36 +1580,60 @@ impl UniswapV3Pool {
     pub fn sync_from_swap_log(&mut self, log: Log) -> Result<(), alloy::sol_types::Error> {
         let event = IUniswapV3Pool::Swap::decode_log(log.as_ref())?;
 
-        let zero_for_one = event.amount1 < I256::ZERO;
-        let (amount_specified, amount_in_from_log) = if zero_for_one {
-            (event.amount1, event.amount0)
+        let zero_for_one = event.amount1 <= I256::ZERO;
+        let (amount_specified, amount_in_from_log, limit) = if zero_for_one {
+            if event.amount1.is_zero() {
+                (event.amount0, None, MIN_SQRT_RATIO + U256::ONE)
+            } else {
+                (
+                    event.amount1,
+                    Some(event.amount0),
+                    U256::from(event.sqrtPriceX96),
+                )
+            }
         } else {
-            (event.amount0, event.amount1)
+            if event.amount0.is_zero() {
+                (event.amount1, None, MAX_SQRT_RATIO - U256::ONE)
+            } else {
+                (
+                    event.amount0,
+                    Some(event.amount1),
+                    U256::from(event.sqrtPriceX96),
+                )
+            }
         };
 
-        let (a0, a1) = self
-            .swap(
-                event.recipient,
-                zero_for_one,
-                amount_specified,
-                U256::from(event.sqrtPriceX96),
-                log.block_timestamp.unwrap(),
-                Some(amount_in_from_log),
-            )
-            .map_err(|e| alloy::sol_types::Error::custom(e.to_string()))?;
-
-        assert_eq!(a0, event.amount0);
-        assert_eq!(a1, event.amount1);
+        dbg!(&event);
+        // Edge case where both amounts are zero, we need to continue because sqrt_price_limit can be updated by this
+        if !amount_specified.is_zero() {
+            let (a0, a1) = self
+                .swap(
+                    event.recipient,
+                    zero_for_one,
+                    amount_specified,
+                    limit,
+                    log.block_timestamp.unwrap(),
+                    amount_in_from_log,
+                )
+                .map_err(|e| alloy::sol_types::Error::custom(e.to_string()))?;
+            dbg!(self.slot0.sqrt_price_x96);
+            dbg!(self.liquidity);
+            dbg!(self.slot0.tick);
+            dbg!(a0);
+            dbg!(a1);
+            assert_eq!(a0, event.amount0);
+            assert_eq!(a1, event.amount1);
+        }
         assert_eq!(self.liquidity, event.liquidity);
 
         // we can not assert because of the edge case where liquidity is zero.
         // we simply cannot know where the swap stopped, so we assert other data points
         // are correct and trust these ones.
         // A little sanity check
-        assert_eq!(
-            self.slot0.sqrt_price_x96 != event.sqrtPriceX96.to(),
-            self.liquidity == 0
-        );
+
+        if self.slot0.sqrt_price_x96 != event.sqrtPriceX96.to() {
+            assert_eq!(self.liquidity, 0);
+        }
         self.slot0.sqrt_price_x96 = event.sqrtPriceX96.to();
         self.slot0.tick = event.tick.as_i32();
 
