@@ -1583,17 +1583,35 @@ impl UniswapV3Pool {
 
         let zero_for_one = event.amount1 <= I256::ZERO;
         let (amount_specified, amount_out_from_log, limit) = if zero_for_one {
-            (
-                event.amount0,
-                Some(event.amount1),
-                U256::from(event.sqrtPriceX96),
-            )
+            if event.amount1.is_zero() {
+                dbg!("SHOULD NEVER HAPPEN");
+                (
+                    event.amount0,
+                    Some(event.amount1),
+                    MIN_SQRT_RATIO + U256::ONE,
+                )
+            } else {
+                (
+                    event.amount0,
+                    Some(event.amount1),
+                    U256::from(event.sqrtPriceX96),
+                )
+            }
         } else {
-            (
-                event.amount1,
-                Some(event.amount0),
-                U256::from(event.sqrtPriceX96),
-            )
+            if event.amount0.is_zero() {
+                dbg!("SHOULD NEVER HAPPEN");
+                (
+                    event.amount1,
+                    Some(event.amount0),
+                    MAX_SQRT_RATIO - U256::ONE,
+                )
+            } else {
+                (
+                    event.amount1,
+                    Some(event.amount0),
+                    U256::from(event.sqrtPriceX96),
+                )
+            }
         };
 
         // Edge case where both amounts are zero, we need to continue because sqrt_price_limit can be updated by this
