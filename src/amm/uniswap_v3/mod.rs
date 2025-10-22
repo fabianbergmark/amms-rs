@@ -508,7 +508,7 @@ impl UniswapV3Pool {
         amount_specified: I256,
         sqrt_price_limit_x_96: U256,
         block_timestamp: u64,
-        amount_in_from_log: Option<I256>,
+        amount_out_from_log: Option<I256>,
     ) -> Result<(I256, I256), AMMError> {
         require(amount_specified != I256::ZERO, "AS")?;
 
@@ -606,23 +606,28 @@ impl UniswapV3Pool {
                 state.amount_specified_remaining -=
                     I256::try_from(step.amount_in + step.fee_amount).unwrap();
                 state.amount_calculated -= I256::try_from(step.amount_out).unwrap();
+
+                // Patch hopefully fixing getting less out when using exact_out instead of exact_in
+                if let Some(amount_out_from_log) = amount_out_from_log {
+                    if state.sqrt_price_x_96 == sqrt_price_limit_x_96 {
+                        assert!(state.amount_specified_remaining >= I256::ZERO);
+                        step.fee_amount += state.amount_specified_remaining.into_raw();
+                        state.amount_specified_remaining = I256::ZERO;
+                    }
+
+                    if state.amount_specified_remaining.is_zero() {
+                        // negative value so check that we decrease how much is given out
+                        assert!(amount_out_from_log >= state.amount_calculated);
+                        let diff = amount_out_from_log - state.amount_calculated;
+                        assert!(diff >= I256::ZERO);
+                        state.amount_calculated = amount_out_from_log;
+                        step.amount_out -= diff.into_raw();
+                    }
+                }
             } else {
                 state.amount_specified_remaining += I256::try_from(step.amount_out).unwrap();
                 state.amount_calculated +=
                     I256::try_from(step.amount_in + step.fee_amount).unwrap();
-            }
-
-            // Patch for determining edge case where more fee is paid
-            if let Some(amount_in) = &amount_in_from_log {
-                assert!(!exact_input);
-                if state.amount_specified_remaining.is_zero()
-                    && state.sqrt_price_x_96 == sqrt_price_limit_x_96
-                {
-                    let extra_fee = *amount_in - state.amount_calculated;
-                    state.amount_calculated += extra_fee;
-                    assert!(extra_fee >= I256::ZERO);
-                    step.fee_amount += extra_fee.into_raw();
-                }
             }
 
             // if the protocol fee is on, calculate how much is owed, decrement feeAmount, and increment protocolFee
@@ -1468,11 +1473,7 @@ impl UniswapV3Pool {
                     params.liquidity_delta,
                 );
 
-                self.liquidity = if params.liquidity_delta < 0 {
-                    liquidity_before - ((-params.liquidity_delta) as u128)
-                } else {
-                    liquidity_before + (params.liquidity_delta as u128)
-                }
+                self.liquidity = add_delta(liquidity_before, params.liquidity_delta)?;
             } else {
                 amount1 = Self::get_amount_1_delta(
                     Self::get_sqrt_ratio_at_tick(params.tick_lower),
@@ -1524,7 +1525,7 @@ impl UniswapV3Pool {
                 fee_growth_global_1_x128,
                 seconds_per_liquidity_cumulative_x128,
                 tick_cumulative,
-                0,
+                block_timestamp as u32,
                 false,
                 self.max_liquidity_per_tick,
             )?;
@@ -1537,7 +1538,7 @@ impl UniswapV3Pool {
                 fee_growth_global_1_x128,
                 seconds_per_liquidity_cumulative_x128,
                 tick_cumulative,
-                0,
+                block_timestamp as u32,
                 true,
                 self.max_liquidity_per_tick,
             )?;
@@ -1581,29 +1582,20 @@ impl UniswapV3Pool {
         let event = IUniswapV3Pool::Swap::decode_log(log.as_ref())?;
 
         let zero_for_one = event.amount1 <= I256::ZERO;
-        let (amount_specified, amount_in_from_log, limit) = if zero_for_one {
-            if event.amount1.is_zero() {
-                (event.amount0, None, MIN_SQRT_RATIO + U256::ONE)
-            } else {
-                (
-                    event.amount1,
-                    Some(event.amount0),
-                    U256::from(event.sqrtPriceX96),
-                )
-            }
+        let (amount_specified, amount_out_from_log, limit) = if zero_for_one {
+            (
+                event.amount0,
+                Some(event.amount1),
+                U256::from(event.sqrtPriceX96),
+            )
         } else {
-            if event.amount0.is_zero() {
-                (event.amount1, None, MAX_SQRT_RATIO - U256::ONE)
-            } else {
-                (
-                    event.amount0,
-                    Some(event.amount1),
-                    U256::from(event.sqrtPriceX96),
-                )
-            }
+            (
+                event.amount1,
+                Some(event.amount0),
+                U256::from(event.sqrtPriceX96),
+            )
         };
 
-        dbg!(&event);
         // Edge case where both amounts are zero, we need to continue because sqrt_price_limit can be updated by this
         if !amount_specified.is_zero() {
             let (a0, a1) = self
@@ -1613,14 +1605,9 @@ impl UniswapV3Pool {
                     amount_specified,
                     limit,
                     log.block_timestamp.unwrap(),
-                    amount_in_from_log,
+                    amount_out_from_log,
                 )
                 .map_err(|e| alloy::sol_types::Error::custom(e.to_string()))?;
-            dbg!(self.slot0.sqrt_price_x96);
-            dbg!(self.liquidity);
-            dbg!(self.slot0.tick);
-            dbg!(a0);
-            dbg!(a1);
             assert_eq!(a0, event.amount0);
             assert_eq!(a1, event.amount1);
         }
@@ -1634,8 +1621,8 @@ impl UniswapV3Pool {
         if self.slot0.sqrt_price_x96 != event.sqrtPriceX96.to() {
             assert_eq!(self.liquidity, 0);
         }
-        self.slot0.sqrt_price_x96 = event.sqrtPriceX96.to();
         self.slot0.tick = event.tick.as_i32();
+        self.slot0.sqrt_price_x96 = event.sqrtPriceX96.to();
 
         tracing::debug!(?event, address = ?self.address, sqrt_price = ?self.slot0.sqrt_price_x96, liquidity = ?self.liquidity, tick = ?self.slot0.tick, "UniswapV3 swap event");
 
@@ -1899,7 +1886,7 @@ pub struct SwapState {
     pub liquidity: u128,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct StepComputations {
     pub sqrt_price_start_x_96: U256,
     pub tick_next: i32,
