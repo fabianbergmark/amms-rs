@@ -107,7 +107,9 @@ impl AutomatedMarketMaker for UniswapV2Pool {
                 Ok(())
             }
             IUniswapV2Pair::Swap::SIGNATURE_HASH => Ok(()),
-            _ => Err(AMMError::EventLogError(EventLogError::InvalidEventSignature)),
+            _ => Err(AMMError::EventLogError(
+                EventLogError::InvalidEventSignature,
+            )),
         }
     }
 

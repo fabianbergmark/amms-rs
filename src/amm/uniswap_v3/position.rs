@@ -7,9 +7,9 @@ use alloy::{
 use serde::{Deserialize, Serialize};
 use uniswap_v3_math::full_math;
 
-use crate::errors::AMMError;
-
 use super::{liquidity_math, util::require};
+use crate::amm::uniswap_v3::util::to_u128;
+use crate::errors::AMMError;
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct Positions {
@@ -93,8 +93,8 @@ impl Position {
         self.fee_growth_inside_0_last_x128 = fee_growth_inside_0_x128;
         self.fee_growth_inside_1_last_x128 = fee_growth_inside_1_x128;
         if tokens_owed_0 > U256::ZERO || tokens_owed_1 > U256::ZERO {
-            self.tokens_owed0 += u128::try_from(tokens_owed_0).unwrap();
-            self.tokens_owed1 += u128::try_from(tokens_owed_1).unwrap();
+            self.tokens_owed0 = self.tokens_owed0.wrapping_add(to_u128(tokens_owed_0));
+            self.tokens_owed1 = self.tokens_owed1.wrapping_add(to_u128(tokens_owed_1));
         }
 
         Ok(())

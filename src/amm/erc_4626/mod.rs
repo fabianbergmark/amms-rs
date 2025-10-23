@@ -101,7 +101,9 @@ impl AutomatedMarketMaker for ERC4626Vault {
             self.vault_reserve -= withdraw_filter.shares;
             tracing::debug!(asset_reserve = ?self.asset_reserve, vault_reserve = ?self.vault_reserve, address = ?self.vault_token, "ER4626 withdraw event");
         } else {
-            return Err(AMMError::EventLogError(EventLogError::InvalidEventSignature));
+            return Err(AMMError::EventLogError(
+                EventLogError::InvalidEventSignature,
+            ));
         }
 
         Ok(())

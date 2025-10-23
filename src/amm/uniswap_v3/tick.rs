@@ -11,9 +11,8 @@ use alloy::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::errors::AMMError;
-
 use super::{liquidity_math, util::require};
+use crate::errors::AMMError;
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
 pub struct Ticks {
     pub ticks: HashMap<U256, Tick>,
