@@ -1597,7 +1597,7 @@ impl UniswapV3Pool {
         let zero_for_one = event.amount1 <= I256::ZERO;
         let (amount_specified, amount_out_from_log, limit) = if zero_for_one {
             if event.amount1.is_zero() {
-                dbg!("SHOULD NEVER HAPPEN");
+                //dbg!("SHOULD NEVER HAPPEN");
                 (
                     event.amount0,
                     Some(event.amount1),
@@ -1612,7 +1612,7 @@ impl UniswapV3Pool {
             }
         } else {
             if event.amount0.is_zero() {
-                dbg!("SHOULD NEVER HAPPEN");
+                //dbg!("SHOULD NEVER HAPPEN");
                 (
                     event.amount1,
                     Some(event.amount0),
