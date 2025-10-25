@@ -7,6 +7,7 @@ pub mod tick;
 pub mod util;
 
 use std::fmt::{Display, Formatter};
+use std::sync::atomic::AtomicUsize;
 use std::u128;
 use std::{cmp::Ordering, collections::BTreeMap, sync::Arc};
 
@@ -69,6 +70,9 @@ sol! {
     }
 }
 
+static COLLECT_CORRECT: AtomicUsize = AtomicUsize::new(0);
+static COLLECT_DIFF: AtomicUsize = AtomicUsize::new(0);
+
 pub const ONE: U256 = uint!(1_U256);
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -124,14 +128,6 @@ impl Info {
             initialized,
         }
     }
-}
-
-fn acceptable_diff(a: u128, b: u128) -> bool {
-    let diff = if a > b { a - b } else { b - a };
-    if diff > 0 {
-        dbg!((a, b));
-    }
-    true
 }
 
 #[async_trait]
@@ -1684,7 +1680,6 @@ impl UniswapV3Pool {
     pub fn sync_from_collect_log(&mut self, log: Log) -> Result<(), alloy::sol_types::Error> {
         let event = IUniswapV3Pool::Collect::decode_log(log.as_ref())?;
 
-        //dbg!(&event);
         let (amount_0, amount_1) = self.collect(
             event.owner,
             event.recipient,
@@ -1693,9 +1688,12 @@ impl UniswapV3Pool {
             event.amount0,
             event.amount1,
         );
-        //dbg!((amount_0, amount_1));
-        assert!(acceptable_diff(amount_0, event.amount0));
-        assert!(acceptable_diff(amount_1, event.amount1));
+        if event.amount0 == amount_0 && event.amount1 == amount_1 {
+            COLLECT_CORRECT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        } else {
+            COLLECT_DIFF.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            dbg!(&COLLECT_CORRECT, &COLLECT_DIFF);
+        }
 
         tracing::debug!(?event, address = ?self.address, sqrt_price = ?self.slot0.sqrt_price_x96, liquidity = ?self.liquidity, tick = ?self.slot0.tick, "UniswapV3 collect event");
 
