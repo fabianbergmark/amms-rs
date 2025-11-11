@@ -4,6 +4,7 @@ pub mod liquidity_math;
 pub mod oracle;
 pub mod position;
 pub mod tick;
+pub mod tick_bitmap;
 pub mod util;
 
 use std::fmt::{Display, Formatter};
@@ -11,9 +12,10 @@ use std::sync::atomic::AtomicUsize;
 use std::u128;
 use std::{cmp::Ordering, collections::BTreeMap, sync::Arc};
 
-use alloy::primitives::aliases::I24;
+use alloy::primitives::aliases::{I24, I56};
 use alloy::primitives::ruint::UintTryFrom;
-use alloy::primitives::{address, U128, U512};
+use alloy::primitives::{address, keccak256, U128, U160, U512};
+use alloy::sol_types::SolValue;
 use alloy::{
     network::Network,
     primitives::{Address, Bytes, B256, I256, U256},
@@ -27,13 +29,12 @@ use async_trait::async_trait;
 use futures::{stream::FuturesOrdered, StreamExt};
 use liquidity_math::add_delta;
 use num_bigfloat::BigFloat;
-use oracle::Observations;
-use position::Positions;
+use oracle::Observation;
+use position::Position;
 use serde::{Deserialize, Serialize};
-use tick::{Tick, Ticks};
+use tick::Tick;
 use tracing::instrument;
 use uniswap_v3_math::full_math::mul_div;
-use uniswap_v3_math::tick_bitmap::TickBitmap;
 use uniswap_v3_math::tick_math::{MAX_SQRT_RATIO, MAX_TICK, MIN_SQRT_RATIO, MIN_TICK};
 use util::require;
 
@@ -43,6 +44,8 @@ use crate::{
     amm::{consts::*, AutomatedMarketMaker, IErc20},
     errors::{AMMError, ArithmeticError, EventLogError, SwapSimulationError},
 };
+
+use super::storage::Storage;
 
 sol! {
     /// Interface of the IUniswapV3Pool
@@ -86,14 +89,11 @@ pub struct UniswapV3Pool {
     pub liquidity: u128,
     pub fee: u32,
     pub tick_spacing: i32,
-    pub tick_bitmap: TickBitmap,
-    pub ticks: Ticks,
-    pub positions: Positions,
     pub fee_growth_global_0_x128: U256,
     pub fee_growth_global_1_x128: U256,
     pub max_liquidity_per_tick: u128,
     pub protocol_fees: ProtocolFees,
-    pub observations: Observations,
+    pub data: Storage,
 }
 
 #[derive(Debug, Clone, Default, Copy)]
@@ -273,6 +273,76 @@ impl AutomatedMarketMaker for UniswapV3Pool {
 }
 
 impl UniswapV3Pool {
+    pub fn get_position(&self, owner: Address, tick_lower: i32, tick_upper: i32) -> Position {
+        let key = (
+            owner,
+            I24::try_from(tick_lower).unwrap(),
+            I24::try_from(tick_upper).unwrap(),
+        );
+        let encoded = key.abi_encode_packed();
+        let slot = keccak256(encoded);
+        let slot = keccak256((slot, U256::from(7)).abi_encode());
+        let slot: U256 = slot.into();
+
+        let data = self.data.get_multiple(slot, 4);
+        Position::abi_decode(&data).unwrap()
+    }
+
+    pub fn save_position(
+        &mut self,
+        owner: Address,
+        tick_lower: i32,
+        tick_upper: i32,
+        position: Position,
+    ) {
+        let key = (
+            owner,
+            I24::try_from(tick_lower).unwrap(),
+            I24::try_from(tick_upper).unwrap(),
+        );
+        let encoded = key.abi_encode_packed();
+        let slot = keccak256(encoded);
+        let slot = keccak256((slot, U256::from(7)).abi_encode());
+        let slot: U256 = slot.into();
+
+        let data = position.abi_encode();
+        self.data.insert_multiple(slot, data);
+    }
+
+    pub fn get_tick(&self, index: i32) -> Tick {
+        let slot = keccak256((I24::try_from(index).unwrap(), U256::from(5)).abi_encode());
+        let slot: U256 = slot.into();
+        let data = self.data.get_multiple(slot, 4);
+        Tick::abi_decode(&data).unwrap()
+    }
+
+    pub fn save_tick(&mut self, index: i32, tick: Tick) {
+        let slot = keccak256((I24::try_from(index).unwrap(), U256::from(5)).abi_encode());
+        let slot: U256 = slot.into();
+        let data = tick.abi_encode();
+        self.data.insert_multiple(slot, data);
+    }
+
+    pub fn remove_tick(&mut self, index: i32) {
+        let slot = keccak256((I24::try_from(index).unwrap(), U256::from(5)).abi_encode());
+        let slot: U256 = slot.into();
+        for i in 0..4 {
+            self.data.remove(slot + U256::from(i));
+        }
+    }
+
+    pub fn get_observation(&self, index: u16) -> Observation {
+        let slot = U256::from(index) + U256_8;
+        let data: [u8; 32] = self.data.get(slot).to_be_bytes();
+        Observation::abi_decode(&data).unwrap()
+    }
+
+    pub fn save_observation(&mut self, index: u16, observation: Observation) {
+        let slot = U256::from(index) + U256_8;
+        let data = U256::from_be_slice(&observation.abi_encode());
+        self.data.insert(slot, data);
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         address: Address,
@@ -538,8 +608,8 @@ impl UniswapV3Pool {
             },
             liquidity_start: self.liquidity,
             block_timestamp: block_timestamp as u32,
-            tick_cumulative: 0,
-            seconds_per_liquidity_cumulative_x128: U256::ZERO,
+            tick_cumulative: I56::ZERO,
+            seconds_per_liquidity_cumulative_x128: U160::ZERO,
             computed_last_observations: false,
         };
 
@@ -569,12 +639,11 @@ impl UniswapV3Pool {
             };
 
             //Get the next tick from the current tick
-            (step.tick_next, step.initialized) =
-                self.tick_bitmap.next_initialized_tick_within_one_word(
-                    state.tick,
-                    self.tick_spacing,
-                    zero_for_one,
-                )?;
+            (step.tick_next, step.initialized) = self.next_initialized_tick_within_one_word(
+                state.tick,
+                self.tick_spacing,
+                zero_for_one,
+            )?;
 
             // ensure that we do not overshoot the min/max tick, as the tick bitmap is not aware of these bounds
             step.tick_next = step.tick_next.clamp(MIN_TICK, MAX_TICK);
@@ -661,7 +730,7 @@ impl UniswapV3Pool {
                         (
                             cache.tick_cumulative,
                             cache.seconds_per_liquidity_cumulative_x128,
-                        ) = self.observations.observe_single(
+                        ) = self.observe_single(
                             cache.block_timestamp,
                             0,
                             slot0_start.tick,
@@ -672,8 +741,7 @@ impl UniswapV3Pool {
                         cache.computed_last_observations = true;
                     }
 
-                    let mut liquidity_net = Tick::cross(
-                        &mut self.ticks,
+                    let mut liquidity_net = self.cross_tick(
                         step.tick_next,
                         if zero_for_one {
                             state.fee_growth_global_x128
@@ -710,7 +778,7 @@ impl UniswapV3Pool {
         }
 
         if state.tick != slot0_start.tick {
-            let (observation_index, observation_cardinality) = self.observations.write(
+            let (observation_index, observation_cardinality) = self.observation_write(
                 slot0_start.observation_index,
                 cache.block_timestamp,
                 slot0_start.tick,
@@ -862,7 +930,7 @@ impl UniswapV3Pool {
     }
 
     /// Fetches the current tick of the pool via static call.
-    pub async fn get_tick<N, P>(&self, provider: Arc<P>) -> Result<i32, AMMError>
+    pub async fn get_tick_from_provider<N, P>(&self, provider: Arc<P>) -> Result<i32, AMMError>
     where
         N: Network,
         P: Provider<N>,
@@ -967,9 +1035,8 @@ impl UniswapV3Pool {
 
         self.slot0.sqrt_price_x96 = event.sqrtPriceX96.to();
         self.slot0.tick = event.tick.as_i32();
-        let (cardinality, cardinality_next) = self
-            .observations
-            .initialize(log.block_timestamp.unwrap() as u32);
+        let (cardinality, cardinality_next) =
+            self.observation_initialize(log.block_timestamp.unwrap() as u32);
         self.slot0.observation_cardinality = cardinality;
         self.slot0.observation_cardinality_next = cardinality_next;
         self.slot0.unlocked = true;
@@ -1145,10 +1212,7 @@ impl UniswapV3Pool {
         amount_0_requested: u128,
         amount_1_requested: u128,
     ) -> (u128, u128) {
-        let position = self
-            .positions
-            .entry((owner, tick_lower, tick_upper))
-            .or_default();
+        let mut position = self.get_position(owner, tick_lower, tick_upper);
 
         let amount0 = if amount_0_requested > position.tokens_owed0 {
             position.tokens_owed0
@@ -1167,6 +1231,9 @@ impl UniswapV3Pool {
         if amount1 > 0 {
             position.tokens_owed1 -= amount1
         }
+
+        self.save_position(owner, tick_lower, tick_upper, position);
+
         (amount0, amount1)
     }
 
@@ -1187,10 +1254,7 @@ impl UniswapV3Pool {
             },
             block_timestamp,
         )?;
-        let position = self
-            .positions
-            .entry((owner, tick_lower, tick_upper))
-            .or_default();
+        let mut position = self.get_position(owner, tick_lower, tick_upper);
 
         let amount0 = (-amount_0_int).into_raw();
         let amount1 = (-amount_1_int).into_raw();
@@ -1199,6 +1263,8 @@ impl UniswapV3Pool {
             position.tokens_owed0 += to_u128(amount0);
             position.tokens_owed1 += to_u128(amount1);
         }
+
+        self.save_position(owner, tick_lower, tick_upper, position);
 
         Ok((amount0, amount1))
     }
@@ -1409,19 +1475,10 @@ impl UniswapV3Pool {
         if slot == U256::from(4) {
             return U256::from(self.liquidity);
         }
-        if let Some(value) = self.positions.read_raw(slot) {
-            return value;
-        }
-        if let Some(value) = self.ticks.read_raw(slot) {
-            return value;
-        }
-        if let Some(value) = self.observations.read_raw(slot) {
-            return value;
-        }
-        if let Some(value) = self.tick_bitmap.read_raw(slot) {
-            return value;
-        }
-        U256::ZERO
+        // All slots below 100 should be accounted for, panic if we forgot something
+        assert!(slot > uint!(100_U256));
+
+        self.data.get(slot)
     }
 
     pub fn modify_position(
@@ -1458,7 +1515,7 @@ impl UniswapV3Pool {
                 (
                     self.slot0.observation_index,
                     self.slot0.observation_cardinality,
-                ) = self.observations.write(
+                ) = self.observation_write(
                     self.slot0.observation_index,
                     block_timestamp as u32,
                     self.slot0.tick,
@@ -1499,10 +1556,7 @@ impl UniswapV3Pool {
         tick: i32,
         block_timestamp: u64,
     ) -> Result<(), AMMError> {
-        let position = self
-            .positions
-            .entry((owner, tick_lower, tick_upper))
-            .or_default();
+        let mut position = self.get_position(owner, tick_lower, tick_upper);
 
         let fee_growth_global_0_x128 = self.fee_growth_global_0_x128;
         let fee_growth_global_1_x128 = self.fee_growth_global_1_x128;
@@ -1511,18 +1565,16 @@ impl UniswapV3Pool {
         let mut flipped_upper = false;
         if liquidity_delta != 0 {
             let time = block_timestamp as u32;
-            let (tick_cumulative, seconds_per_liquidity_cumulative_x128) =
-                self.observations.observe_single(
-                    time,
-                    0,
-                    self.slot0.tick,
-                    self.slot0.observation_index,
-                    self.liquidity,
-                    self.slot0.observation_cardinality,
-                );
+            let (tick_cumulative, seconds_per_liquidity_cumulative_x128) = self.observe_single(
+                time,
+                0,
+                self.slot0.tick,
+                self.slot0.observation_index,
+                self.liquidity,
+                self.slot0.observation_cardinality,
+            );
 
-            flipped_lower = Tick::update(
-                &mut self.ticks,
+            flipped_lower = self.update_tick(
                 tick_lower,
                 tick,
                 liquidity_delta,
@@ -1534,8 +1586,7 @@ impl UniswapV3Pool {
                 false,
                 self.max_liquidity_per_tick,
             )?;
-            flipped_upper = Tick::update(
-                &mut self.ticks,
+            flipped_upper = self.update_tick(
                 tick_upper,
                 tick,
                 liquidity_delta,
@@ -1548,15 +1599,14 @@ impl UniswapV3Pool {
                 self.max_liquidity_per_tick,
             )?;
             if flipped_lower {
-                self.tick_bitmap.flip_tick(tick_lower, self.tick_spacing)?;
+                self.flip_tick(tick_lower, self.tick_spacing)?;
             }
             if flipped_upper {
-                self.tick_bitmap.flip_tick(tick_upper, self.tick_spacing)?;
+                self.flip_tick(tick_upper, self.tick_spacing)?;
             }
         }
 
-        let (fee_growth_inside_0_x128, fee_growth_inside_1_x128) = Tick::get_fee_growth_inside(
-            &mut self.ticks,
+        let (fee_growth_inside_0_x128, fee_growth_inside_1_x128) = self.get_fee_growth_inside(
             tick_lower,
             tick_upper,
             tick,
@@ -1570,12 +1620,14 @@ impl UniswapV3Pool {
             fee_growth_inside_1_x128,
         )?;
 
+        self.save_position(owner, tick_lower, tick_upper, position);
+
         if liquidity_delta < 0 {
             if flipped_lower {
-                self.ticks.remove(&tick_lower);
+                self.remove_tick(tick_lower);
             }
             if flipped_upper {
-                self.ticks.remove(&tick_upper);
+                self.remove_tick(tick_upper);
             }
         }
 
@@ -1731,7 +1783,7 @@ impl UniswapV3Pool {
     ) -> Result<(), alloy::sol_types::Error> {
         let event = IUniswapV3Pool::IncreaseObservationCardinalityNext::decode_log(log.as_ref())?;
 
-        self.observations.grow(
+        self.observation_grow(
             event.observationCardinalityNextOld,
             event.observationCardinalityNextNew,
         );
@@ -1905,8 +1957,8 @@ pub struct SwapCache {
     fee_protocol: u8,
     liquidity_start: u128,
     block_timestamp: u32,
-    tick_cumulative: i64,
-    seconds_per_liquidity_cumulative_x128: U256,
+    tick_cumulative: I56,
+    seconds_per_liquidity_cumulative_x128: U160,
     computed_last_observations: bool,
 }
 
@@ -1936,7 +1988,7 @@ pub struct StepComputations {
 mod test {
 
     use alloy::{
-        primitives::{address, aliases::U24, U256},
+        primitives::{address, aliases::U24, U160, U256},
         providers::ProviderBuilder,
     };
 

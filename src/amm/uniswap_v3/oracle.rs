@@ -1,23 +1,18 @@
 use alloy::{
-    primitives::{aliases::I56, U160, U256},
-    sol_types::SolValue,
+    primitives::{aliases::I56, U160},
+    sol,
 };
 use serde::{Deserialize, Serialize};
 
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize)]
-pub struct Observation {
-    block_timestamp: u32,
-    tick_cumulative: i64,
-    seconds_per_liquidity_cumulative_x128: U256,
-    initialized: bool,
-}
+use super::UniswapV3Pool;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Observations(Vec<Observation>);
-
-impl Default for Observations {
-    fn default() -> Self {
-        Self(vec![Default::default(); 1])
+sol! {
+    #[derive(Copy, Debug, Default, Serialize, Deserialize)]
+    struct Observation {
+        uint32 block_timestamp;
+        int56 tick_cumulative;
+        uint160 seconds_per_liquidity_cumulative_x128;
+        bool initialized;
     }
 }
 
@@ -28,28 +23,7 @@ impl Default for Observations {
 /// maximum length of the oracle array. New slots will be added when the array is fully populated.
 /// Observations are overwritten when the full length of the oracle array is populated.
 /// The most recent observation is available, independent of the length of the oracle array, by passing 0 to observe()
-impl Observations {
-    pub fn read_raw(&self, index: U256) -> Option<U256> {
-        if (index < U256::from(8 + 65535)) && index >= U256::from(8) {
-            let index: usize = index.to();
-            let Some(value) = self.0.get(index - 8) else {
-                return Some(U256::ZERO);
-            };
-
-            let data = (
-                value.initialized,
-                U160::from(value.seconds_per_liquidity_cumulative_x128),
-                I56::try_from(value.tick_cumulative).unwrap(),
-                value.block_timestamp,
-            )
-                .abi_encode_packed();
-
-            Some(U256::from_be_slice(&data))
-        } else {
-            None
-        }
-    }
-
+impl UniswapV3Pool {
     /// @notice Transforms a previous observation into a new observation, given the passage of time and the current tick and liquidity values
     /// @dev blockTimestamp _must_ be chronologically equal to or greater than last.blockTimestamp, safe for 0 or 1 overflows
     /// @param last The specified observation to be transformed
@@ -57,7 +31,7 @@ impl Observations {
     /// @param tick The active tick at the time of the new observation
     /// @param liquidity The total in-range liquidity at the time of the new observation
     /// @return Observation The newly populated observation
-    pub fn transform(
+    pub fn observation_transform(
         last: &Observation,
         block_timestamp: u32,
         tick: i32,
@@ -65,11 +39,11 @@ impl Observations {
     ) -> Observation {
         let delta = block_timestamp - last.block_timestamp;
 
-        let tick_cumulative = last.tick_cumulative + (tick * delta as i32) as i64;
+        let tick_cumulative = last.tick_cumulative + I56::try_from(tick * delta as i32).unwrap();
 
         let liquidity_value = if liquidity > 0 { liquidity } else { 1 };
         let seconds_per_liquidity_cumulative_x128 = last.seconds_per_liquidity_cumulative_x128
-            + ((U256::from(delta) << 128) / U256::from(liquidity_value));
+            + ((U160::from(delta) << 128) / U160::from(liquidity_value));
 
         Observation {
             block_timestamp,
@@ -83,13 +57,16 @@ impl Observations {
     /// @param time The time of the oracle initialization, via block.timestamp truncated to uint32
     /// @return cardinality The number of populated elements in the oracle array
     /// @return cardinalityNext The new length of the oracle array, independent of population
-    pub fn initialize(&mut self, time: u32) -> (u16, u16) {
-        self.0[0] = Observation {
-            block_timestamp: time,
-            tick_cumulative: 0,
-            seconds_per_liquidity_cumulative_x128: U256::ZERO,
-            initialized: true,
-        };
+    pub fn observation_initialize(&mut self, time: u32) -> (u16, u16) {
+        self.save_observation(
+            0,
+            Observation {
+                block_timestamp: time,
+                tick_cumulative: I56::ONE,
+                seconds_per_liquidity_cumulative_x128: U160::ZERO,
+                initialized: true,
+            },
+        );
 
         (1, 1)
     }
@@ -107,7 +84,7 @@ impl Observations {
     /// @param cardinalityNext The new length of the oracle array, independent of population
     /// @return indexUpdated The new index of the most recently written element in the oracle array
     /// @return cardinalityUpdated The new cardinality of the oracle array
-    pub fn write(
+    pub fn observation_write(
         &mut self,
         index: u16,
         block_timestamp: u32,
@@ -116,7 +93,7 @@ impl Observations {
         cardinality: u16,
         cardinality_next: u16,
     ) -> (u16, u16) {
-        let last = &self.0[index as usize];
+        let last = &self.get_observation(index);
 
         // early return if we've already written an observation this block
         if last.block_timestamp == block_timestamp {
@@ -135,31 +112,39 @@ impl Observations {
         let index_updated_u16 = index_updated as u16;
 
         // write transformed observation
-        self.0[index_updated_u16 as usize] =
-            Self::transform(last, block_timestamp, tick, liquidity);
+        self.save_observation(
+            index_updated_u16,
+            Self::observation_transform(last, block_timestamp, tick, liquidity),
+        );
 
         (index_updated_u16, cardinality_updated)
     }
+
     /// @notice Prepares the oracle array to store up to `next` observations
     /// @param self The stored oracle array
     /// @param current The current next cardinality of the oracle array
     /// @param next The proposed next cardinality which will be populated in the oracle array
     /// @return next The next cardinality which will be populated in the oracle array
-    pub fn grow(&mut self, current: u16, next: u16) -> u16 {
+    pub fn observation_grow(&mut self, current: u16, next: u16) -> u16 {
         assert!(current > 0, "I");
 
         if next <= current {
             return current;
         }
 
-        self.0.resize(next as usize, Default::default());
-
         for i in current..next {
-            self.0[i as usize].block_timestamp = 1;
+            self.save_observation(
+                i,
+                Observation {
+                    block_timestamp: 1,
+                    ..Default::default()
+                },
+            );
         }
 
         next
     }
+
     pub fn lte(time: u32, a: u32, b: u32) -> bool {
         if a <= time && b <= time {
             return a <= b;
@@ -193,14 +178,14 @@ impl Observations {
 
         loop {
             let i = (l + r) / 2;
-            before_or_at = self.0[i % cardinality as usize].clone();
+            before_or_at = self.get_observation((i % cardinality as usize) as u16);
 
             if !before_or_at.initialized {
                 l = i + 1;
                 continue;
             }
 
-            at_or_after = self.0[(i + 1) % cardinality as usize].clone();
+            at_or_after = self.get_observation(((i + 1) % cardinality as usize) as u16);
 
             let target_at_or_after = Self::lte(time, before_or_at.block_timestamp, target);
 
@@ -225,7 +210,7 @@ impl Observations {
         liquidity: u128,
         cardinality: u16,
     ) -> (Observation, Observation) {
-        let mut before_or_at = self.0[index as usize].clone();
+        let mut before_or_at = self.get_observation(index);
 
         if Self::lte(time, before_or_at.block_timestamp, target) {
             if before_or_at.block_timestamp == target {
@@ -233,14 +218,14 @@ impl Observations {
             } else {
                 return (
                     before_or_at.clone(),
-                    Self::transform(&before_or_at, target, tick, liquidity),
+                    Self::observation_transform(&before_or_at, target, tick, liquidity),
                 );
             }
         }
 
-        before_or_at = self.0[(index as usize + 1) % cardinality as usize].clone();
+        before_or_at = self.get_observation((index + 1) % cardinality);
         if !before_or_at.initialized {
-            before_or_at = self.0[0].clone();
+            before_or_at = self.get_observation(0);
         }
 
         assert!(Self::lte(time, before_or_at.block_timestamp, target), "OLD");
@@ -256,11 +241,11 @@ impl Observations {
         index: u16,
         liquidity: u128,
         cardinality: u16,
-    ) -> (i64, U256) {
+    ) -> (I56, U160) {
         if seconds_ago == 0 {
-            let mut last = self.0[index as usize].clone();
+            let mut last = self.get_observation(index);
             if last.block_timestamp != time {
-                last = Self::transform(&last, time, tick, liquidity);
+                last = Self::observation_transform(&last, time, tick, liquidity);
             }
             return (
                 last.tick_cumulative,
@@ -289,15 +274,15 @@ impl Observations {
 
             let tick_cumulative = before_or_at.tick_cumulative
                 + ((at_or_after.tick_cumulative - before_or_at.tick_cumulative)
-                    / observation_time_delta as i64)
-                    * target_delta as i64;
+                    / I56::unchecked_from(observation_time_delta))
+                    * I56::unchecked_from(target_delta);
 
             let seconds_per_liquidity_cumulative_x128 = before_or_at
                 .seconds_per_liquidity_cumulative_x128
                 + ((at_or_after.seconds_per_liquidity_cumulative_x128
                     - before_or_at.seconds_per_liquidity_cumulative_x128)
-                    * U256::from(target_delta)
-                    / U256::from(observation_time_delta));
+                    * U160::from(target_delta)
+                    / U160::from(observation_time_delta));
 
             (tick_cumulative, seconds_per_liquidity_cumulative_x128)
         }
@@ -311,7 +296,7 @@ impl Observations {
         index: u16,
         liquidity: u128,
         cardinality: u16,
-    ) -> (Vec<i64>, Vec<U256>) {
+    ) -> (Vec<I56>, Vec<U160>) {
         assert!(cardinality > 0, "I");
 
         let mut tick_cumulatives = Vec::with_capacity(seconds_agos.len());
