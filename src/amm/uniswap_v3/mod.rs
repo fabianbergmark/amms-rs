@@ -273,6 +273,25 @@ impl AutomatedMarketMaker for UniswapV3Pool {
 }
 
 impl UniswapV3Pool {
+    pub fn shallow_clone(&self) -> Self {
+        Self {
+            address: self.address,
+            token_a: self.token_a,
+            token_a_decimals: self.token_a_decimals,
+            token_b: self.token_b,
+            token_b_decimals: self.token_b_decimals,
+            slot0: self.slot0,
+            liquidity: self.liquidity,
+            fee: self.fee,
+            tick_spacing: self.tick_spacing,
+            fee_growth_global_0_x128: self.fee_growth_global_0_x128,
+            fee_growth_global_1_x128: self.fee_growth_global_1_x128,
+            max_liquidity_per_tick: self.max_liquidity_per_tick,
+            protocol_fees: self.protocol_fees,
+            data: self.data.shallow_clone(),
+        }
+    }
+
     pub fn get_position(&self, owner: Address, tick_lower: i32, tick_upper: i32) -> Position {
         let key = (
             owner,

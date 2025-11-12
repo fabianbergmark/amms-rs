@@ -88,6 +88,16 @@ pub trait AutomatedMarketMaker {
     fn get_token_out(&self, token_in: Address) -> Address;
 }
 
+impl AMM {
+    pub fn shallow_clone(&self) -> Self {
+        // Shallow cloning only necessary for v3 pools
+        match self {
+            AMM::UniswapV3Pool(pool) => AMM::UniswapV3Pool(pool.shallow_clone()),
+            pool => pool.clone(),
+        }
+    }
+}
+
 macro_rules! amm {
     ($($pool_type:ident),+ $(,)?) => {
         #[derive(Debug, Clone, Serialize, Deserialize)]
