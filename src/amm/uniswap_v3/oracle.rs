@@ -1,18 +1,56 @@
 use alloy::{
-    primitives::{aliases::I56, U160},
+    primitives::{aliases::I56, ruint::aliases::U256, U160},
     sol,
+    sol_types::SolValue,
 };
 use serde::{Deserialize, Serialize};
 
 use super::UniswapV3Pool;
 
 sol! {
-    #[derive(Copy, Debug, Default, Serialize, Deserialize)]
+    #[derive(Copy, Debug, Default, Serialize, Deserialize, Eq, PartialEq)]
     struct Observation {
         uint32 block_timestamp;
         int56 tick_cumulative;
         uint160 seconds_per_liquidity_cumulative_x128;
         bool initialized;
+    }
+}
+
+impl Observation {
+    pub fn decode_storage(data: &[u8]) -> Self {
+        assert_eq!(
+            data.len(),
+            32,
+            "Expected exactly 32 bytes for a storage slot"
+        );
+        let initialized = data[0] != 0;
+        let seconds_per_liquidity_cumulative_x128 = U160::from_be_slice(&data[1..21]);
+
+        let tick_cumulative = I56::try_from_be_slice(&data[21..28]).unwrap();
+
+        let block_timestamp = u32::from_be_bytes(data[28..32].try_into().unwrap());
+
+        let res = Observation {
+            block_timestamp,
+            tick_cumulative,
+            seconds_per_liquidity_cumulative_x128,
+            initialized,
+        };
+
+        res
+    }
+
+    pub fn encode_storage(&self) -> U256 {
+        let data = (
+            self.initialized,
+            self.seconds_per_liquidity_cumulative_x128,
+            self.tick_cumulative,
+            self.block_timestamp,
+        )
+            .abi_encode_packed();
+        assert_eq!(data.len(), 32);
+        U256::from_be_slice(&data)
     }
 }
 
@@ -39,7 +77,8 @@ impl UniswapV3Pool {
     ) -> Observation {
         let delta = block_timestamp - last.block_timestamp;
 
-        let tick_cumulative = last.tick_cumulative + I56::try_from(tick * delta as i32).unwrap();
+        let tick_cumulative =
+            last.tick_cumulative + I56::try_from(tick as i64 * delta as i64).unwrap();
 
         let liquidity_value = if liquidity > 0 { liquidity } else { 1 };
         let seconds_per_liquidity_cumulative_x128 = last.seconds_per_liquidity_cumulative_x128
@@ -62,7 +101,7 @@ impl UniswapV3Pool {
             0,
             Observation {
                 block_timestamp: time,
-                tick_cumulative: I56::ONE,
+                tick_cumulative: I56::ZERO,
                 seconds_per_liquidity_cumulative_x128: U160::ZERO,
                 initialized: true,
             },

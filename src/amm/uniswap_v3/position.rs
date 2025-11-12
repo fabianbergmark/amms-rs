@@ -20,6 +20,58 @@ sol! {
 }
 
 impl Position {
+    pub fn decode_storage(data: &[U256]) -> Self {
+        assert_eq!(
+            data.len(),
+            4,
+            "Expected exactly 128 bytes for a Position (4 storage slots)"
+        );
+
+        // Split into 4 32-byte slots (big-endian)
+        let s0 = &data[0].to_be_bytes_vec();
+        let s1 = &data[1].to_be_bytes_vec();
+        let s2 = &data[2].to_be_bytes_vec();
+        let s3 = &data[3].to_be_bytes_vec();
+
+        // Slot 0: liquidity (uint128, low half)
+        let liquidity = u128::from_be_bytes(s0[16..32].try_into().unwrap());
+
+        // Slot 1: fee_growth_inside_0_last_x128
+        let fee_growth_inside_0_last_x128 = U256::from_be_slice(s1);
+
+        // Slot 2: fee_growth_inside_1_last_x128
+        let fee_growth_inside_1_last_x128 = U256::from_be_slice(s2);
+
+        // Slot 3: tokens_owed1 (high) + tokens_owed0 (low)
+        let tokens_owed1 = u128::from_be_bytes(s3[0..16].try_into().unwrap());
+        let tokens_owed0 = u128::from_be_bytes(s3[16..32].try_into().unwrap());
+
+        Position {
+            liquidity,
+            fee_growth_inside_0_last_x128,
+            fee_growth_inside_1_last_x128,
+            tokens_owed0,
+            tokens_owed1,
+        }
+    }
+
+    pub fn encode_storage(&self) -> [U256; 4] {
+        let mut s0 = [0u8; 32];
+        s0[16..32].copy_from_slice(&self.liquidity.to_be_bytes());
+        let slot0 = U256::from_be_slice(&s0);
+
+        let slot1 = self.fee_growth_inside_0_last_x128;
+
+        let slot2 = self.fee_growth_inside_1_last_x128;
+
+        let mut s3 = [0u8; 32];
+        s3[0..16].copy_from_slice(&self.tokens_owed1.to_be_bytes());
+        s3[16..32].copy_from_slice(&self.tokens_owed0.to_be_bytes());
+        let slot3 = U256::from_be_slice(&s3);
+
+        [slot0, slot1, slot2, slot3]
+    }
+
     pub(crate) fn update(
         &mut self,
         liquidity_delta: i128,

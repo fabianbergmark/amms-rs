@@ -1,6 +1,7 @@
 use alloy::{
     primitives::{aliases::I56, U160, U256},
     sol,
+    sol_types::SolValue,
 };
 use serde::{Deserialize, Serialize};
 
@@ -8,7 +9,7 @@ use super::{liquidity_math, util::require, UniswapV3Pool};
 use crate::errors::AMMError;
 
 sol! {
-    #[derive(Debug, Deserialize, Serialize, Default, Copy)]
+    #[derive(Debug, Deserialize, Serialize, Default, Copy, PartialEq, Eq)]
     struct Tick {
         uint128 liquidity_gross;
         int128 liquidity_net;
@@ -18,6 +19,70 @@ sol! {
         uint160 seconds_per_liquidity_outside_x128;
         uint32 seconds_outside;
         bool initialized;
+    }
+}
+
+impl Tick {
+    /// Decode from 128 bytes (4 storage slots) into Tick.
+    pub fn decode_storage(data: &[U256]) -> Self {
+        assert_eq!(data.len(), 4, "Expected exactly 128 bytes for Tick");
+
+        let s0 = &data[0].to_be_bytes_vec();
+        let s1 = &data[1].to_be_bytes_vec();
+        let s2 = &data[2].to_be_bytes_vec();
+        let s3 = &data[3].to_be_bytes_vec();
+
+        // Slot 0: liquidity_gross (low 16B), liquidity_net (high 16B)
+        let liquidity_gross = u128::from_be_bytes(s0[16..32].try_into().unwrap());
+        let liquidity_net = i128::from_be_bytes(s0[0..16].try_into().unwrap());
+
+        // Slot 1: fee_growth_outside_0_x128
+        let fee_growth_outside_0_x128 = U256::from_be_slice(s1);
+
+        // Slot 2: fee_growth_outside_1_x128
+        let fee_growth_outside_1_x128 = U256::from_be_slice(s2);
+
+        // Slot 3: packed tail
+        let initialized = s3[0] != 0;
+        let seconds_outside = u32::from_be_bytes(s3[1..5].try_into().unwrap());
+        let seconds_per_liquidity_outside_x128 = U160::from_be_slice(&s3[5..25]);
+        let tick_cumulative_outside = I56::try_from_be_slice(&s3[25..32]).unwrap();
+
+        Tick {
+            liquidity_gross,
+            liquidity_net,
+            fee_growth_outside_0_x128,
+            fee_growth_outside_1_x128,
+            tick_cumulative_outside,
+            seconds_per_liquidity_outside_x128,
+            seconds_outside,
+            initialized,
+        }
+    }
+
+    /// Encode Tick into 4 storage slots (big-endian, packed) using abi::encode_packed where possible.
+    pub fn encode_storage(&self) -> [U256; 4] {
+        // Slot 0: liquidity_net (high 16B) + liquidity_gross (low 16B)
+        let s0_bytes = (self.liquidity_net, self.liquidity_gross).abi_encode_packed();
+        let slot0 = U256::from_be_slice(&s0_bytes);
+
+        // Slot 1
+        let slot1 = self.fee_growth_outside_0_x128;
+
+        // Slot 2
+        let slot2 = self.fee_growth_outside_1_x128;
+
+        // Slot 3: tick_cumulative_outside (7B) + seconds_per_liquidity_outside_x128 (20B) + seconds_outside (4B) + initialized (1B)
+        let s3_bytes = (
+            self.initialized,
+            self.seconds_outside,
+            self.seconds_per_liquidity_outside_x128,
+            self.tick_cumulative_outside,
+        )
+            .abi_encode_packed();
+        let slot3 = U256::from_be_slice(&s3_bytes);
+
+        [slot0, slot1, slot2, slot3]
     }
 }
 
@@ -93,9 +158,8 @@ impl UniswapV3Pool {
             if tick <= tick_current {
                 info.fee_growth_outside_0_x128 = fee_growth_global_0_x128;
                 info.fee_growth_outside_1_x128 = fee_growth_global_1_x128;
-                info.seconds_per_liquidity_outside_x128 =
-                    seconds_per_liquidity_cumulative_x128.to();
-                info.tick_cumulative_outside = tick_cumulative.try_into().unwrap();
+                info.seconds_per_liquidity_outside_x128 = seconds_per_liquidity_cumulative_x128;
+                info.tick_cumulative_outside = tick_cumulative;
                 info.seconds_outside = time;
             }
             info.initialized = true;
@@ -125,12 +189,11 @@ impl UniswapV3Pool {
         let mut info = self.get_tick(tick);
         info.fee_growth_outside_0_x128 = fee_growth_global_0_x128 - info.fee_growth_outside_0_x128;
         info.fee_growth_outside_1_x128 = fee_growth_global_1_x128 - info.fee_growth_outside_1_x128;
-        info.seconds_per_liquidity_outside_x128 = seconds_per_liquidity_cumulative_x128
-            .to::<U160>()
-            - info.seconds_per_liquidity_outside_x128;
-        info.tick_cumulative_outside =
-            I56::unchecked_from(tick_cumulative) - info.tick_cumulative_outside;
+        info.seconds_per_liquidity_outside_x128 =
+            seconds_per_liquidity_cumulative_x128 - info.seconds_per_liquidity_outside_x128;
+        info.tick_cumulative_outside = tick_cumulative - info.tick_cumulative_outside;
         info.seconds_outside = time - info.seconds_outside;
+        self.save_tick(tick, info);
         return info.liquidity_net;
     }
 }

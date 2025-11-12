@@ -47,19 +47,17 @@ impl Storage {
         };
     }
 
-    pub fn get_multiple(&self, slot: U256, length: usize) -> Vec<u8> {
-        let mut bytes = vec![];
+    pub fn get_multiple(&self, slot: U256, length: usize) -> Vec<U256> {
+        let mut slots = vec![];
         for i in 0..length {
-            bytes.append(&mut self.get(slot + U256::from(i)).to_be_bytes_vec());
+            slots.push(self.get(slot + U256::from(i)));
         }
-        bytes
+        slots
     }
 
-    pub fn insert_multiple(&mut self, slot: U256, data: Vec<u8>) {
-        assert_eq!(data.len() % 256, 0);
-        for (i, value) in data.chunks(256).enumerate() {
-            let value = U256::from_be_slice(value);
-            self.insert(slot + U256::from(i), value);
+    pub fn insert_multiple(&mut self, slot: U256, data: &[U256]) {
+        for (i, value) in data.into_iter().enumerate() {
+            self.insert(slot + U256::from(i), *value);
         }
     }
 

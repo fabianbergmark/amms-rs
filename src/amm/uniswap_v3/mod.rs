@@ -285,7 +285,7 @@ impl UniswapV3Pool {
         let slot: U256 = slot.into();
 
         let data = self.data.get_multiple(slot, 4);
-        Position::abi_decode(&data).unwrap()
+        Position::decode_storage(&data)
     }
 
     pub fn save_position(
@@ -305,22 +305,22 @@ impl UniswapV3Pool {
         let slot = keccak256((slot, U256::from(7)).abi_encode());
         let slot: U256 = slot.into();
 
-        let data = position.abi_encode();
-        self.data.insert_multiple(slot, data);
+        let data = position.encode_storage();
+        self.data.insert_multiple(slot, &data);
     }
 
     pub fn get_tick(&self, index: i32) -> Tick {
         let slot = keccak256((I24::try_from(index).unwrap(), U256::from(5)).abi_encode());
         let slot: U256 = slot.into();
         let data = self.data.get_multiple(slot, 4);
-        Tick::abi_decode(&data).unwrap()
+        Tick::decode_storage(&data)
     }
 
     pub fn save_tick(&mut self, index: i32, tick: Tick) {
         let slot = keccak256((I24::try_from(index).unwrap(), U256::from(5)).abi_encode());
         let slot: U256 = slot.into();
-        let data = tick.abi_encode();
-        self.data.insert_multiple(slot, data);
+        let data = tick.encode_storage();
+        self.data.insert_multiple(slot, &data);
     }
 
     pub fn remove_tick(&mut self, index: i32) {
@@ -334,12 +334,12 @@ impl UniswapV3Pool {
     pub fn get_observation(&self, index: u16) -> Observation {
         let slot = U256::from(index) + U256_8;
         let data: [u8; 32] = self.data.get(slot).to_be_bytes();
-        Observation::abi_decode(&data).unwrap()
+        Observation::decode_storage(&data)
     }
 
     pub fn save_observation(&mut self, index: u16, observation: Observation) {
         let slot = U256::from(index) + U256_8;
-        let data = U256::from_be_slice(&observation.abi_encode());
+        let data = observation.encode_storage();
         self.data.insert(slot, data);
     }
 
@@ -1466,17 +1466,18 @@ impl UniswapV3Pool {
         if slot == U256::ZERO {
             return self.slot0.into();
         }
-        if slot == U256::from(1) {
+        if slot == uint!(1_U256) {
             return self.fee_growth_global_0_x128;
         }
-        if slot == U256::from(2) {
+        if slot == uint!(2_U256) {
             return self.fee_growth_global_1_x128;
         }
-        if slot == U256::from(4) {
+        if slot == uint!(3_U256) {
+            return self.protocol_fees.into();
+        }
+        if slot == uint!(4_U256) {
             return U256::from(self.liquidity);
         }
-        // All slots below 100 should be accounted for, panic if we forgot something
-        assert!(slot > uint!(100_U256));
 
         self.data.get(slot)
     }
@@ -1921,10 +1922,18 @@ impl UniswapV3Pool {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct ProtocolFees {
     pub token0: u128,
     pub token1: u128,
+}
+
+impl Into<U256> for ProtocolFees {
+    fn into(self) -> U256 {
+        let packed = (self.token1, self.token0).abi_encode_packed();
+        assert_eq!(packed.len(), 32);
+        U256::from_be_slice(&packed)
+    }
 }
 
 #[derive(Debug, Copy, Clone, Default, Serialize, Deserialize)]
