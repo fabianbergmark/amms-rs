@@ -88,7 +88,7 @@ impl AutomatedMarketMaker for ERC4626Vault {
     }
 
     #[instrument(skip(self), level = "debug")]
-    fn sync_from_log(&mut self, log: Log) -> Result<(), EventLogError> {
+    fn sync_from_log(&mut self, log: Log) -> Result<(), AMMError> {
         let event_signature = log.data().topics()[0];
         if event_signature == IERC4626Vault::Deposit::SIGNATURE_HASH {
             let deposit_event = IERC4626Vault::Deposit::decode_log(log.as_ref())?;
@@ -101,7 +101,9 @@ impl AutomatedMarketMaker for ERC4626Vault {
             self.vault_reserve -= withdraw_filter.shares;
             tracing::debug!(asset_reserve = ?self.asset_reserve, vault_reserve = ?self.vault_reserve, address = ?self.vault_token, "ER4626 withdraw event");
         } else {
-            return Err(EventLogError::InvalidEventSignature);
+            return Err(AMMError::EventLogError(
+                EventLogError::InvalidEventSignature,
+            ));
         }
 
         Ok(())

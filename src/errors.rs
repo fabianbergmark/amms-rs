@@ -56,6 +56,8 @@ pub enum AMMError {
     CheckpointError(#[from] CheckpointError),
     #[error(transparent)]
     EyreError(#[from] eyre::Error),
+    #[error("Contract reverted with {0}")]
+    LogicError(&'static str),
 }
 
 #[derive(Error, Debug)]

@@ -94,7 +94,7 @@ impl AutomatedMarketMaker for UniswapV2Pool {
     }
 
     #[instrument(skip(self), level = "debug")]
-    fn sync_from_log(&mut self, log: Log) -> Result<(), EventLogError> {
+    fn sync_from_log(&mut self, log: Log) -> Result<(), AMMError> {
         let event_signature = log.topics()[0];
 
         match event_signature {
@@ -107,7 +107,9 @@ impl AutomatedMarketMaker for UniswapV2Pool {
                 Ok(())
             }
             IUniswapV2Pair::Swap::SIGNATURE_HASH => Ok(()),
-            _ => Err(EventLogError::InvalidEventSignature),
+            _ => Err(AMMError::EventLogError(
+                EventLogError::InvalidEventSignature,
+            )),
         }
     }
 
