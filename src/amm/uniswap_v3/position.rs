@@ -8,7 +8,7 @@ use crate::amm::uniswap_v3::util::to_u128;
 use crate::errors::AMMError;
 
 sol! {
-    #[derive(Debug, Default, Copy, Serialize, Deserialize)]
+    #[derive(Debug, Default, Copy, Serialize, Deserialize, PartialEq, Eq)]
     struct Position {
         uint128 liquidity;
         uint256 fee_growth_inside_0_last_x128;
