@@ -45,8 +45,8 @@ fn populate_pool_data_from_tokens(
     pool.token_b = tokens[2].as_address()?;
     pool.token_b_decimals = tokens[3].as_uint()?.0.to::<u8>();
     pool.liquidity = tokens[4].as_uint()?.0.to::<u128>();
-    pool.sqrt_price = tokens[5].as_uint()?.0;
-    pool.tick = tokens[6].as_int()?.0.as_i32();
+    pool.slot0.sqrt_price_x96 = tokens[5].as_uint()?.0;
+    pool.slot0.tick = tokens[6].as_int()?.0.as_i32();
     pool.tick_spacing = tokens[7].as_int()?.0.as_i32();
     pool.fee = tokens[8].as_uint()?.0.to::<u32>();
 
@@ -220,11 +220,11 @@ where
                         .ok_or(AMMError::BatchRequestError(pool.address))?
                         .0
                         .to::<u128>();
-                    pool.sqrt_price = tokens_tup[1]
+                    pool.slot0.sqrt_price_x96 = tokens_tup[1]
                         .as_uint()
                         .ok_or(AMMError::BatchRequestError(pool.address))?
                         .0;
-                    pool.tick = tokens_tup[2]
+                    pool.slot0.tick = tokens_tup[2]
                         .as_int()
                         .ok_or(AMMError::BatchRequestError(pool.address))?
                         .0

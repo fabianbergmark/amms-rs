@@ -5,7 +5,7 @@ use std::{
 
 use alloy::{
     network::Network,
-    primitives::{Address, B256, U256},
+    primitives::{Address, B256},
     providers::Provider,
     rpc::types::eth::{Filter, Log},
     sol,
@@ -123,16 +123,9 @@ impl AutomatedMarketMakerFactory for UniswapV3Factory {
             address: pool_created_event.pool,
             token_a: pool_created_event.token0,
             token_b: pool_created_event.token1,
-            token_a_decimals: 0,
-            token_b_decimals: 0,
             fee: pool_created_event.fee.to(),
-            liquidity: 0,
-            sqrt_price: U256::ZERO,
             tick_spacing: pool_created_event.tickSpacing.as_i32(),
-            tick: 0,
-            tick_bitmap: HashMap::new(),
-            ticks: HashMap::new(),
-            positions: HashMap::new(),
+            ..Default::default()
         }))
     }
 }

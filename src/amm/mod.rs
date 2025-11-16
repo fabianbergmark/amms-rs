@@ -1,7 +1,7 @@
 pub mod consts;
 pub mod erc_4626;
 pub mod factory;
-pub mod shallow_amm;
+pub mod storage;
 pub mod uniswap_v2;
 pub mod uniswap_v3;
 
@@ -21,7 +21,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use self::{erc_4626::ERC4626Vault, uniswap_v2::UniswapV2Pool, uniswap_v3::UniswapV3Pool};
-use crate::errors::{AMMError, ArithmeticError, EventLogError, SwapSimulationError};
+use crate::errors::{AMMError, ArithmeticError, SwapSimulationError};
 
 sol! {
     /// Interface of the ERC20
@@ -54,7 +54,7 @@ pub trait AutomatedMarketMaker {
     fn calculate_price(&self, base_token: Address) -> Result<f64, ArithmeticError>;
 
     /// Updates the AMM data from a log.
-    fn sync_from_log(&mut self, log: Log) -> Result<(), EventLogError>;
+    fn sync_from_log(&mut self, log: Log) -> Result<(), AMMError>;
 
     /// Populates the AMM data via batched static calls.
     async fn populate_data<N, P>(
@@ -88,6 +88,16 @@ pub trait AutomatedMarketMaker {
     fn get_token_out(&self, token_in: Address) -> Address;
 }
 
+impl AMM {
+    pub fn shallow_clone(&self) -> Self {
+        // Shallow cloning only necessary for v3 pools
+        match self {
+            AMM::UniswapV3Pool(pool) => AMM::UniswapV3Pool(pool.shallow_clone()),
+            pool => pool.clone(),
+        }
+    }
+}
+
 macro_rules! amm {
     ($($pool_type:ident),+ $(,)?) => {
         #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -119,7 +129,7 @@ macro_rules! amm {
                 }
             }
 
-            fn sync_from_log(&mut self, log: Log) -> Result<(), EventLogError> {
+            fn sync_from_log(&mut self, log: Log) -> Result<(), AMMError> {
                 match self {
                     $(AMM::$pool_type(pool) => pool.sync_from_log(log),)+
                 }
