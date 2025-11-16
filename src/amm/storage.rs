@@ -37,7 +37,12 @@ impl Storage {
         match self {
             Storage::Root(map) => map.get(&slot).cloned().unwrap_or_default(),
             // Storage::Provider(dyn_provider, address) => dyn_provider.get_storage_at(*address, slot),
-            Storage::Overlay(overlay) => overlay.overlay.get(&slot).cloned().unwrap_or_default(),
+            Storage::Overlay(overlay) => overlay
+                .overlay
+                .get(&slot)
+                .or(overlay.underlying.get(&slot))
+                .cloned()
+                .unwrap_or_default(),
         }
     }
 
@@ -45,10 +50,16 @@ impl Storage {
         match self {
             Storage::Root(map) => {
                 let map = Arc::make_mut(map);
-                map.insert(slot, data)
+                match data {
+                    U256::ZERO => map.remove(&slot),
+                    data => map.insert(slot, data),
+                }
             }
             // Storage::Provider(dyn_provider, address) => dyn_provider.get_storage_at(*address, slot),
-            Storage::Overlay(overlay) => overlay.overlay.insert(slot, data),
+            Storage::Overlay(overlay) => match data {
+                U256::ZERO => overlay.overlay.remove(&slot),
+                data => overlay.overlay.insert(slot, data),
+            },
         };
     }
 

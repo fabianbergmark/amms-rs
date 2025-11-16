@@ -1956,13 +1956,13 @@ impl Into<U256> for ProtocolFees {
 
 #[derive(Debug, Copy, Clone, Default, Serialize, Deserialize)]
 pub struct Slot0 {
-    sqrt_price_x96: U256,
-    tick: i32,
-    observation_index: u16,
-    observation_cardinality: u16,
-    observation_cardinality_next: u16,
-    fee_protocol: u8,
-    unlocked: bool,
+    pub sqrt_price_x96: U256,
+    pub tick: i32,
+    pub observation_index: u16,
+    pub observation_cardinality: u16,
+    pub observation_cardinality_next: u16,
+    pub fee_protocol: u8,
+    pub unlocked: bool,
 }
 
 impl Into<U256> for Slot0 {
