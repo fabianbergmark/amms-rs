@@ -40,7 +40,7 @@ use util::require;
 
 use self::factory::IUniswapV3Factory;
 use super::storage::Storage;
-use crate::amm::uniswap_v3::util::{to_i128, to_u128};
+use crate::amm::uniswap_v3::util::{to_i128, to_i256, to_u128};
 use crate::{
     amm::{consts::*, AutomatedMarketMaker, IErc20},
     errors::{AMMError, ArithmeticError, EventLogError, SwapSimulationError},
@@ -1210,7 +1210,7 @@ impl UniswapV3Pool {
                 owner: recipient,
                 tick_lower,
                 tick_upper,
-                liquidity_delta: to_i128(amount.into())?,
+                liquidity_delta: to_i128(to_i256(amount)?)?,
             },
             block_timestamp,
         )?;
@@ -1268,7 +1268,7 @@ impl UniswapV3Pool {
                 owner,
                 tick_lower,
                 tick_upper,
-                liquidity_delta: -(to_i128(amount.into())?),
+                liquidity_delta: -to_i128(to_i256(amount)?)?,
             },
             block_timestamp,
         )?;

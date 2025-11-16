@@ -1,6 +1,6 @@
 use alloy::primitives::{I256, U256};
 
-use crate::errors::AMMError;
+use crate::errors::{AMMError, ArithmeticError};
 
 pub(crate) fn require(assertion: bool, message: &'static str) -> Result<(), AMMError> {
     if assertion {
@@ -23,5 +23,19 @@ pub(crate) fn to_u128(v: U256) -> u128 {
 }
 
 pub(crate) fn to_i128(v: I256) -> Result<i128, AMMError> {
-    v.try_into()
+    match v.try_into() {
+        Ok(v) => Ok(v),
+        Err(_) => Err(AMMError::ArithmeticError(
+            ArithmeticError::U128ConversionError,
+        )),
+    }
+}
+
+pub(crate) fn to_i256(v: u128) -> Result<I256, AMMError> {
+    match v.try_into() {
+        Ok(v) => Ok(v),
+        Err(_) => Err(AMMError::ArithmeticError(
+            ArithmeticError::U128ConversionError,
+        )),
+    }
 }
