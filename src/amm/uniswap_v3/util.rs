@@ -1,4 +1,4 @@
-use alloy::primitives::U256;
+use alloy::primitives::{I256, U256};
 
 use crate::errors::AMMError;
 
@@ -20,4 +20,8 @@ pub(crate) fn to_u128(v: U256) -> u128 {
 
     // Combine the two lowest limbs to get the lower 128 bits
     (limbs[1] as u128) << 64 | (limbs[0] as u128)
+}
+
+pub(crate) fn to_i128(v: I256) -> Result<i128, AMMError> {
+    v.try_into()
 }

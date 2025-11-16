@@ -4,9 +4,8 @@ use alloy::sol_types::SolValue;
 use uniswap_v3_math::bit_math;
 use uniswap_v3_math::error::UniswapV3MathError;
 
-use crate::amm::consts::U256_1;
-
 use super::UniswapV3Pool;
+use crate::amm::consts::U256_1;
 
 sol! {
     #[sol(rpc)]

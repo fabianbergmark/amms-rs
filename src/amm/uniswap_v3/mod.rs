@@ -39,13 +39,12 @@ use uniswap_v3_math::tick_math::{MAX_SQRT_RATIO, MAX_TICK, MIN_SQRT_RATIO, MIN_T
 use util::require;
 
 use self::factory::IUniswapV3Factory;
-use crate::amm::uniswap_v3::util::to_u128;
+use super::storage::Storage;
+use crate::amm::uniswap_v3::util::{to_i128, to_u128};
 use crate::{
     amm::{consts::*, AutomatedMarketMaker, IErc20},
     errors::{AMMError, ArithmeticError, EventLogError, SwapSimulationError},
 };
-
-use super::storage::Storage;
 
 sol! {
     /// Interface of the IUniswapV3Pool
@@ -1211,7 +1210,7 @@ impl UniswapV3Pool {
                 owner: recipient,
                 tick_lower,
                 tick_upper,
-                liquidity_delta: amount as i128,
+                liquidity_delta: to_i128(amount.into())?,
             },
             block_timestamp,
         )?;
@@ -1269,7 +1268,7 @@ impl UniswapV3Pool {
                 owner,
                 tick_lower,
                 tick_upper,
-                liquidity_delta: -(amount as i128),
+                liquidity_delta: -(to_i128(amount.into())?),
             },
             block_timestamp,
         )?;
