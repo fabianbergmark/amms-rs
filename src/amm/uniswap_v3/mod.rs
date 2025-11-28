@@ -12,7 +12,7 @@ use std::sync::atomic::AtomicUsize;
 use std::u128;
 use std::{cmp::Ordering, collections::BTreeMap, sync::Arc};
 
-use alloy::primitives::aliases::{I24, I56};
+use alloy::primitives::aliases::{I24, I56, U24};
 use alloy::primitives::ruint::UintTryFrom;
 use alloy::primitives::{address, keccak256, U128, U160, U512};
 use alloy::sol_types::SolValue;
@@ -1496,8 +1496,26 @@ impl UniswapV3Pool {
         if slot == uint!(4_U256) {
             return U256::from(self.liquidity);
         }
-
         self.data.get(slot)
+    }
+
+    pub fn store_raw(&mut self, slot: U256, value: U256) {
+        if slot == U256::ZERO {
+            self.slot0 = value.into();
+        }
+        if slot == uint!(1_U256) {
+            self.fee_growth_global_0_x128 = value;
+        }
+        if slot == uint!(2_U256) {
+            self.fee_growth_global_1_x128 = value;
+        }
+        if slot == uint!(3_U256) {
+            self.protocol_fees = value.into();
+        }
+        if slot == uint!(4_U256) {
+            self.liquidity = value.try_into().unwrap();
+        }
+        self.data.insert(slot, value);
     }
 
     pub fn modify_position(
@@ -1954,6 +1972,23 @@ impl Into<U256> for ProtocolFees {
     }
 }
 
+impl From<U256> for ProtocolFees {
+    fn from(value: U256) -> Self {
+        let bytes: [u8; 32] = value.to_be_bytes();
+
+        // token1 occupies bytes 0..16
+        let token1 = u128::from_be_bytes(bytes[0..16].try_into().unwrap());
+
+        // token0 occupies bytes 16..32
+        let token0 = u128::from_be_bytes(bytes[16..32].try_into().unwrap());
+
+        let res = ProtocolFees { token0, token1 };
+        let other: U256 = res.into();
+        assert_eq!(value, other);
+        res
+    }
+}
+
 #[derive(Debug, Copy, Clone, Default, Serialize, Deserialize)]
 pub struct Slot0 {
     pub sqrt_price_x96: U256,
@@ -1977,6 +2012,38 @@ impl Into<U256> for Slot0 {
         obs |= (self.unlocked as u64) << 56;
         data |= U256::from(obs) << 184;
         data
+    }
+}
+
+impl From<U256> for Slot0 {
+    fn from(value: U256) -> Self {
+        let sqrt_price_x96 = value & ((U256_1 << 160) - U256_1);
+
+        let tick_bits: U256 = (value >> 160) & ((U256_1 << 24) - U256_1);
+        let tick_bits: U24 = tick_bits.to();
+        let tick = I24::from_raw(tick_bits).as_i32();
+
+        let obs_bits: U256 = (value >> 184) & U256::from(u64::MAX);
+        let obs: u64 = obs_bits.to::<u64>();
+
+        let observation_index = (obs & 0xFFFF) as u16;
+        let observation_cardinality = ((obs >> 16) & 0xFFFF) as u16;
+        let observation_cardinality_next = ((obs >> 32) & 0xFFFF) as u16;
+        let fee_protocol = ((obs >> 48) & 0xFF) as u8;
+        let unlocked = ((obs >> 56) & 0xFF) as u8 == 1;
+
+        let slot0 = Slot0 {
+            sqrt_price_x96,
+            tick,
+            observation_index,
+            observation_cardinality,
+            observation_cardinality_next,
+            fee_protocol,
+            unlocked,
+        };
+        let other: U256 = slot0.into();
+        assert_eq!(value, other);
+        slot0
     }
 }
 
